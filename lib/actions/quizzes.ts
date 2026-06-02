@@ -46,7 +46,7 @@ export async function getQuizzes(
     orderBy: {
       createdAt: "desc",
     },
-  });
+  }) as unknown as Promise<QuizWithCategory[]>;
 }
 
 export async function createQuiz(
@@ -54,7 +54,7 @@ export async function createQuiz(
 ): Promise<QuizWithCategory> {
   validateQuizInput(data);
 
-  const quiz = await prisma.quiz.create({
+  const quiz = (await prisma.quiz.create({
     data: {
       question: data.question.trim(),
       optionA: data.optionA.trim(),
@@ -65,7 +65,7 @@ export async function createQuiz(
       categoryId: data.categoryId,
     },
     include: { category: true },
-  });
+  })) as unknown as QuizWithCategory;
 
   revalidatePath("/list");
 
@@ -78,7 +78,7 @@ export async function updateQuiz(
 ): Promise<QuizWithCategory> {
   validateQuizInput(data);
 
-  const quiz = await prisma.quiz.update({
+  const quiz = (await prisma.quiz.update({
     where: { id },
     data: {
       question: data.question.trim(),
@@ -90,7 +90,7 @@ export async function updateQuiz(
       categoryId: data.categoryId,
     },
     include: { category: true },
-  });
+  })) as unknown as QuizWithCategory;
 
   revalidatePath("/list");
 
