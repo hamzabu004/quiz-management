@@ -163,9 +163,97 @@ export default function QuestionBankClient({ subject, initialMcqs, initialNextCu
     }
   };
 
-  const handleExport = (type: 'csv') => {
+  const handleExport = (type: 'csv' | 'pdf' | 'latex' | 'docx') => {
     if (type === 'csv') {
       window.location.href = `/api/export?ids=${selectedMCQIds.join(',')}`;
+    } else if (type === 'pdf') {
+      const selectedMcqs = mcqs.filter(q => selectedMCQIds.includes(q.id));
+      const iframe = document.createElement('iframe');
+      iframe.style.position = 'absolute';
+      iframe.style.width = '0px';
+      iframe.style.height = '0px';
+      iframe.style.border = 'none';
+      document.body.appendChild(iframe);
+      
+      const doc = iframe.contentWindow?.document;
+      if (doc) {
+        let html = `
+          <html>
+          <head>
+            <title>Exported MCQs</title>
+            <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
+            <style>
+              body { font-family: sans-serif; padding: 20px; line-height: 1.6; }
+              .question { margin-bottom: 30px; page-break-inside: avoid; }
+              .options { list-style-type: upper-alpha; margin-top: 10px; }
+              .option { margin-bottom: 8px; }
+            </style>
+          </head>
+          <body>
+            <ol>
+        `;
+        
+        selectedMcqs.forEach(q => {
+          html += `
+            <li class="question">
+              <div>${formatLaTeX(q.questionStem)}</div>
+              <ol class="options">
+                <li class="option">${formatLaTeX(q.optionA)}</li>
+                <li class="option">${formatLaTeX(q.optionB)}</li>
+                <li class="option">${formatLaTeX(q.optionC)}</li>
+                <li class="option">${formatLaTeX(q.optionD)}</li>
+              </ol>
+            </li>
+          `;
+        });
+        
+        html += `
+            </ol>
+          </body>
+          </html>
+        `;
+        
+        doc.open();
+        doc.write(html);
+        doc.close();
+        
+        setTimeout(() => {
+          iframe.contentWindow?.focus();
+          iframe.contentWindow?.print();
+          setTimeout(() => document.body.removeChild(iframe), 1000);
+        }, 500);
+      }
+    } else if (type === 'latex') {
+      const selectedMcqs = mcqs.filter(q => selectedMCQIds.includes(q.id));
+      const cleanForLaTeX = (text: string) => text.replace(/<[^>]+>/g, '').trim();
+      let tex = "\\documentclass{article}\n";
+      tex += "\\usepackage[utf8]{inputenc}\n";
+      tex += "\\usepackage{amsmath,amssymb}\n\n";
+      tex += "\\begin{document}\n\n";
+      tex += "\\begin{enumerate}\n";
+
+      selectedMcqs.forEach(q => {
+        tex += `  \\item ${cleanForLaTeX(q.questionStem)}\n`;
+        tex += "  \\begin{enumerate}\n";
+        tex += `    \\item ${cleanForLaTeX(q.optionA)}\n`;
+        tex += `    \\item ${cleanForLaTeX(q.optionB)}\n`;
+        tex += `    \\item ${cleanForLaTeX(q.optionC)}\n`;
+        tex += `    \\item ${cleanForLaTeX(q.optionD)}\n`;
+        tex += "  \\end{enumerate}\n\n";
+      });
+
+      tex += "\\end{enumerate}\n";
+      tex += "\\end{document}\n";
+      
+      const blob = new Blob([tex], { type: 'text/plain;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `mcqs_export_${new Date().toISOString().split('T')[0]}.tex`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
     }
     setShowExportDropdown(false);
   };
@@ -298,6 +386,26 @@ export default function QuestionBankClient({ subject, initialMcqs, initialNextCu
                   className="w-full text-left px-4 py-2 text-xs text-lumina-secondary hover:bg-lumina-container-lowest hover:text-lumina-primary transition-colors cursor-pointer"
                 >
                   Export CSV Spreadsheet
+                </button>
+                <button
+                  onClick={() => handleExport('pdf')}
+                  className="w-full text-left px-4 py-2 text-xs text-lumina-secondary hover:bg-lumina-container-lowest hover:text-lumina-primary transition-colors cursor-pointer"
+                >
+                  Export PDF
+                </button>
+                <button
+                  onClick={() => handleExport('latex')}
+                  className="w-full text-left px-4 py-2 text-xs text-lumina-secondary hover:bg-lumina-container-lowest hover:text-lumina-primary transition-colors cursor-pointer"
+                >
+                  Export LaTeX
+                </button>
+                <button
+                  onClick={() => handleExport('docx')}
+                  disabled
+                  className="w-full text-left px-4 py-2 text-xs text-lumina-text-muted cursor-not-allowed opacity-50"
+                  title="Coming soon via server-side"
+                >
+                  Export DOCX (Coming soon)
                 </button>
               </div>
             )}

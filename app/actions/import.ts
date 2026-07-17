@@ -14,9 +14,20 @@ function normalizeAnswer(answer: string) {
 export async function importCsvData(subjectId: string, csvContent: string) {
   // Very basic CSV parsing for demonstration purposes
   const lines = csvContent.split('\n');
-  const headers = lines[0].split(',');
-  
-  const mcqs = [];
+  const importedMcqs: Array<{
+    categoryName: string;
+    data: {
+      subjectId: string;
+      questionStem: string;
+      optionA: string;
+      optionB: string;
+      optionC: string;
+      optionD: string;
+      answer: string;
+      explanation: string;
+    };
+  }> = [];
+
   for (let i = 1; i < lines.length; i++) {
     const line = lines[i].trim();
     if (!line) continue;
@@ -33,18 +44,8 @@ export async function importCsvData(subjectId: string, csvContent: string) {
       const answer = normalizeAnswer(values[6]);
       const explanation = values[7] || '';
 
-      // Find or create category
-      let category = await prisma.category.findFirst({
-        where: { subjectId, categoryName }
-      });
-
-      if (!category) {
-        category = await prisma.category.create({
-          data: { subjectId, categoryName }
-        });
-      }
-
-      const mcq = await prisma.mcq.create({
+      importedMcqs.push({
+        categoryName,
         data: {
           subjectId,
           questionStem: stem,
@@ -54,17 +55,60 @@ export async function importCsvData(subjectId: string, csvContent: string) {
           optionD,
           answer,
           explanation,
-          categories: {
-            create: {
-              categoryId: category.id
-            }
-          }
-        }
+        },
       });
-      mcqs.push(mcq);
     }
   }
 
+  const categoryNames = Array.from(new Set(importedMcqs.map((mcq) => mcq.categoryName)));
+  const BULK_BATCH_SIZE = 500;
+
+  await prisma.$transaction(async (tx) => {
+    const existingCategories = await tx.category.findMany({
+      where: { subjectId, categoryName: { in: categoryNames } },
+      select: { id: true, categoryName: true },
+    });
+    const categoryByName = new Map(existingCategories.map((category) => [category.categoryName, category.id]));
+    const missingCategoryNames = categoryNames.filter((name) => !categoryByName.has(name));
+
+    if (missingCategoryNames.length > 0) {
+      await tx.category.createMany({
+        data: missingCategoryNames.map((categoryName) => ({ subjectId, categoryName })),
+      });
+
+      const createdCategories = await tx.category.findMany({
+        where: { subjectId, categoryName: { in: missingCategoryNames } },
+        select: { id: true, categoryName: true },
+      });
+      createdCategories.forEach((category) => categoryByName.set(category.categoryName, category.id));
+    }
+
+    const mcqsByCategory = new Map<string, typeof importedMcqs>();
+    importedMcqs.forEach((mcq) => {
+      const entries = mcqsByCategory.get(mcq.categoryName) ?? [];
+      entries.push(mcq);
+      mcqsByCategory.set(mcq.categoryName, entries);
+    });
+
+    for (const [categoryName, mcqs] of Array.from(mcqsByCategory.entries())) {
+      const categoryId = categoryByName.get(categoryName);
+      if (!categoryId) throw new Error(`Unable to create category "${categoryName}".`);
+
+      // Each batch belongs to one category, so no returned-row ordering is required.
+      for (let start = 0; start < mcqs.length; start += BULK_BATCH_SIZE) {
+        const batch = mcqs.slice(start, start + BULK_BATCH_SIZE);
+        const createdMcqs = await tx.mcq.createManyAndReturn({
+          data: batch.map((mcq) => mcq.data),
+          select: { id: true },
+        });
+
+        await tx.categoryMcq.createMany({
+          data: createdMcqs.map((mcq) => ({ categoryId, mcqId: mcq.id })),
+        });
+      }
+    }
+  }, { maxWait: 5_000, timeout: 60_000 });
+
   revalidatePath(`/subject/${subjectId}`);
-  return { success: true, count: mcqs.length };
+  return { success: true, count: importedMcqs.length };
 }
