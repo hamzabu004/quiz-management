@@ -1,0 +1,8 @@
+{
+  "name": "MCQs Bank",
+  "description": "An interactive tutor suite for selecting classrooms, managing subjects, and generating and editing high-focus Multiple Choice Questions (MCQs) with an integrated AI preview.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

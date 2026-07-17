@@ -1,0 +1,49 @@
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Space Grotesk", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+
+  /* Geometric Balance - Sophisticated Light Color Tokens */
+  --color-app-bg: #F5F5F3;
+  --color-lumina-surface: #FFFFFF;
+  --color-lumina-container-lowest: #F1F1EF;
+  --color-lumina-container-low: #EBEBE8;
+  --color-lumina-container: #FFFFFF;
+  --color-lumina-container-high: #E2E2DE;
+  --color-lumina-container-highest: #D5D5D0;
+  
+  --color-lumina-primary: #1A1A1A;
+  --color-lumina-primary-hover: #404040;
+  --color-lumina-primary-dim: #2D2D2D;
+  --color-lumina-primary-container: #EBEBE8;
+  --color-lumina-on-primary: #FFFFFF;
+  --color-lumina-secondary: #5E5E5A;
+  --color-lumina-on-secondary: #1A1A1A;
+  --color-lumina-text: #1A1A1A;
+  --color-lumina-text-muted: #7A7A75;
+  --color-lumina-text-variant: #40403D;
+  --color-lumina-border: rgba(26, 26, 26, 0.12);
+  --color-lumina-border-high: #1A1A1A;
+}
+
+@layer base {
+  body {
+    background-color: var(--color-app-bg);
+    color: var(--color-lumina-text);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+}
+
+/* Animations for subtle transitions */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.animate-fadeIn {
+  animation: fadeIn 0.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
