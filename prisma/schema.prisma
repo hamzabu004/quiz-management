@@ -86,6 +86,7 @@ model Mcq {
   creator        User        @relation(fields: [createdBy], references: [id])
   categories     CategoryMcq[]
 
+  @@index([subjectId, createdAt, id])
   @@map("mcq")
 }
 

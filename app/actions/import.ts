@@ -3,6 +3,14 @@
 import prisma from '../../src/lib/prisma';
 import { revalidatePath } from 'next/cache';
 
+function normalizeAnswer(answer: string) {
+  const normalized = answer.trim().toLowerCase();
+  if (!['a', 'b', 'c', 'd'].includes(normalized)) {
+    throw new Error('Correct answer must be A, B, C, or D.');
+  }
+  return normalized;
+}
+
 export async function importCsvData(subjectId: string, csvContent: string) {
   // Very basic CSV parsing for demonstration purposes
   const lines = csvContent.split('\n');
@@ -22,7 +30,7 @@ export async function importCsvData(subjectId: string, csvContent: string) {
       const optionB = values[3];
       const optionC = values[4];
       const optionD = values[5];
-      const answer = values[6];
+      const answer = normalizeAnswer(values[6]);
       const explanation = values[7] || '';
 
       // Find or create category

@@ -3,6 +3,14 @@
 import prisma from '../../src/lib/prisma';
 import { revalidatePath } from 'next/cache';
 
+function normalizeAnswer(answer: string) {
+  const normalized = answer.trim().toLowerCase();
+  if (!['a', 'b', 'c', 'd'].includes(normalized)) {
+    throw new Error('Correct answer must be A, B, C, or D.');
+  }
+  return normalized;
+}
+
 export async function deleteMcq(id: string, subjectId: string) {
   await prisma.mcq.delete({
     where: { id }
@@ -22,6 +30,7 @@ export async function createMcq(data: {
   categoryName: string;
 }) {
   const { subjectId, categoryName, ...mcqData } = data;
+  const answer = normalizeAnswer(mcqData.answer);
   
   // Find or create category
   let category = await prisma.category.findFirst({
@@ -40,6 +49,7 @@ export async function createMcq(data: {
   const newMcq = await prisma.mcq.create({
     data: {
       ...mcqData,
+      answer,
       subjectId,
       categories: {
         create: {
@@ -65,6 +75,7 @@ export async function updateMcq(id: string, data: {
   categoryName: string;
 }) {
   const { subjectId, categoryName, ...mcqData } = data;
+  const answer = normalizeAnswer(mcqData.answer);
   
   // Find or create category
   let category = await prisma.category.findFirst({
@@ -90,6 +101,7 @@ export async function updateMcq(id: string, data: {
     where: { id },
     data: {
       ...mcqData,
+      answer,
       categories: {
         create: {
           categoryId: category.id

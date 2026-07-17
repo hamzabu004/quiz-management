@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { 
-  ArrowLeft, Check, X, Eye
+  ArrowLeft, Check, X, Eye, LoaderCircle
 } from 'lucide-react';
 import { formatLaTeX } from '../../src/utils';
 import { useRouter } from 'next/navigation';
@@ -62,6 +62,9 @@ export default function QuestionEditorClient({ mode, subject, existingMcq }: Pro
   const [errorToast, setErrorToast] = useState<string | null>(null);
 
   const [previewSelectedId, setPreviewSelectedId] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
+  const [isCancelling, setIsCancelling] = useState(false);
+  const isProcessing = isSaving || isCancelling;
 
   useEffect(() => {
     if (mode === 'edit' && existingMcq) {
@@ -100,6 +103,8 @@ export default function QuestionEditorClient({ mode, subject, existingMcq }: Pro
   };
 
   const handleSaveSubmit = async () => {
+    if (isProcessing) return;
+
     if (!stem.trim()) {
       showError("Question stem is required.");
       return;
@@ -123,16 +128,24 @@ export default function QuestionEditorClient({ mode, subject, existingMcq }: Pro
       categoryName
     };
 
-    if (mode === 'add') {
-      await createMcq(mcqData);
-    } else if (existingMcq) {
-      await updateMcq(existingMcq.id, mcqData);
-    }
+    setIsSaving(true);
+    try {
+      if (mode === 'add') {
+        await createMcq(mcqData);
+      } else if (existingMcq) {
+        await updateMcq(existingMcq.id, mcqData);
+      }
 
-    router.push(`/subject/${subject.id}`);
+      router.push(`/subject/${subject.id}`);
+    } catch {
+      setIsSaving(false);
+      showError('Unable to save the MCQ. Please try again.');
+    }
   };
 
   const handleCancel = () => {
+    if (isProcessing) return;
+    setIsCancelling(true);
     router.push(`/subject/${subject.id}`);
   };
 
@@ -151,7 +164,8 @@ export default function QuestionEditorClient({ mode, subject, existingMcq }: Pro
         <div className="flex items-center gap-4">
           <button
             onClick={handleCancel}
-            className="p-2 rounded-md hover:bg-lumina-container-lowest text-lumina-secondary hover:text-lumina-primary transition-colors cursor-pointer"
+            disabled={isProcessing}
+            className="p-2 rounded-md hover:bg-lumina-container-lowest text-lumina-secondary hover:text-lumina-primary transition-colors cursor-pointer disabled:cursor-not-allowed disabled:opacity-50"
           >
             <ArrowLeft size={18} />
           </button>
@@ -168,16 +182,20 @@ export default function QuestionEditorClient({ mode, subject, existingMcq }: Pro
         <div className="flex items-center gap-3">
           <button
             onClick={handleCancel}
-            className="py-2 px-4 rounded text-sm font-sans font-semibold text-lumina-secondary hover:text-lumina-primary hover:bg-lumina-container-lowest transition-all cursor-pointer"
+            disabled={isProcessing}
+            className="py-2 px-4 rounded text-sm font-sans font-semibold text-lumina-secondary hover:text-lumina-primary hover:bg-lumina-container-lowest transition-all cursor-pointer disabled:cursor-wait disabled:opacity-70"
           >
-            Cancel
+            {isCancelling ? (
+              <span className="flex items-center gap-2"><LoaderCircle size={16} className="animate-spin" /> Cancelling…</span>
+            ) : 'Cancel'}
           </button>
           <button
             onClick={handleSaveSubmit}
-            className="py-2 px-5 bg-lumina-primary hover:bg-lumina-primary-hover text-lumina-on-primary rounded text-sm font-sans font-semibold transition-all active:scale-[0.98] flex items-center gap-2 cursor-pointer shadow-xs"
+            disabled={isProcessing}
+            className="py-2 px-5 bg-lumina-primary hover:bg-lumina-primary-hover text-lumina-on-primary rounded text-sm font-sans font-semibold transition-all active:scale-[0.98] flex items-center gap-2 cursor-pointer shadow-xs disabled:cursor-wait disabled:opacity-80"
           >
-            <Check size={16} />
-            <span>Save Question</span>
+            {isSaving ? <LoaderCircle size={16} className="animate-spin" /> : <Check size={16} />}
+            <span>{isSaving ? 'Saving…' : 'Save Question'}</span>
           </button>
         </div>
       </div>

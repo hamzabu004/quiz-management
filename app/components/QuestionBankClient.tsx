@@ -1,15 +1,17 @@
 "use client";
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   Plus, Download, ChevronDown, Edit, Trash2, Check, 
-  ArrowLeft, Sparkles, HelpCircle, Upload, X, Search
+  ArrowLeft, Sparkles, HelpCircle, Upload, X, Search, LoaderCircle
 } from 'lucide-react';
 import { formatLaTeX } from '../../src/utils';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { deleteMcq } from '../actions/mcq';
 import { importCsvData } from '../actions/import';
+import { loadMcqsPage } from '../actions/mcq-pagination';
+import type { PaginatedMcq } from '../lib/mcq-pagination';
 
 interface Category {
   id: string;
@@ -28,26 +30,16 @@ interface Subject {
   categories: Category[];
 }
 
-interface MCQ {
-  id: string;
-  questionStem: string;
-  optionA: string;
-  optionB: string;
-  optionC: string;
-  optionD: string;
-  answer: string;
-  explanation: string | null;
-  categoryName: string;
-}
-
 interface Props {
   subject: Subject;
-  initialMcqs: MCQ[];
+  initialMcqs: PaginatedMcq[];
+  initialNextCursor: string | null;
 }
 
-export default function QuestionBankClient({ subject, initialMcqs }: Props) {
+export default function QuestionBankClient({ subject, initialMcqs, initialNextCursor }: Props) {
   const router = useRouter();
-  const [mcqs, setMcqs] = useState<MCQ[]>(initialMcqs);
+  const [mcqs, setMcqs] = useState<PaginatedMcq[]>(initialMcqs);
+  const [nextCursor, setNextCursor] = useState<string | null>(initialNextCursor);
   const [selectedCategoryNames, setSelectedCategoryNames] = useState<string[]>(['All Categories']);
   const [showExportDropdown, setShowExportDropdown] = useState(false);
   const [expandedExplanations, setExpandedExplanations] = useState<Record<string, boolean>>({});
@@ -55,24 +47,30 @@ export default function QuestionBankClient({ subject, initialMcqs }: Props) {
   const [showImportDialog, setShowImportDialog] = useState(false);
   const [importFile, setImportFile] = useState<File | null>(null);
   const [importError, setImportError] = useState<string | null>(null);
+  const [isImporting, setIsImporting] = useState(false);
 
   const [isSelectionMode, setIsSelectionMode] = useState(false);
   const [showSelectedOnly, setShowSelectedOnly] = useState(false);
   const [selectedMCQIds, setSelectedMCQIds] = useState<string[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
+  const [debouncedSearchQuery, setDebouncedSearchQuery] = useState('');
+  const [deletingMcqId, setDeletingMcqId] = useState<string | null>(null);
+  const [isNavigatingToNewMcq, setIsNavigatingToNewMcq] = useState(false);
 
-  const ITEMS_PER_PAGE = 6;
-  const [visibleCount, setVisibleCount] = useState(ITEMS_PER_PAGE);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const [isRefreshingMcqs, setIsRefreshingMcqs] = useState(false);
+  const hasMountedPagination = useRef(false);
 
   // Sync initialMcqs if they change
   useEffect(() => {
     setMcqs(initialMcqs);
-  }, [initialMcqs]);
+    setNextCursor(initialNextCursor);
+  }, [initialMcqs, initialNextCursor]);
 
   useEffect(() => {
-    setVisibleCount(ITEMS_PER_PAGE);
-  }, [selectedCategoryNames, searchQuery, showSelectedOnly]);
+    const timeout = setTimeout(() => setDebouncedSearchQuery(searchQuery), 300);
+    return () => clearTimeout(timeout);
+  }, [searchQuery]);
 
   const showError = (message: string) => {
     setImportError(message);
@@ -80,6 +78,8 @@ export default function QuestionBankClient({ subject, initialMcqs }: Props) {
   };
 
   const handleImportSubmit = async () => {
+    if (isImporting) return;
+
     if (!importFile) {
       showError("Please select a CSV file to import.");
       return;
@@ -91,12 +91,15 @@ export default function QuestionBankClient({ subject, initialMcqs }: Props) {
     }
 
     try {
+      setIsImporting(true);
       const text = await importFile.text();
       await importCsvData(subject.id, text);
       setShowImportDialog(false);
       setImportFile(null);
     } catch (e) {
       showError("Failed to parse or import CSV.");
+    } finally {
+      setIsImporting(false);
     }
   };
 
@@ -120,33 +123,44 @@ export default function QuestionBankClient({ subject, initialMcqs }: Props) {
     }
   };
 
-  const filteredMCQs = mcqs.filter((q) => {
-    const matchesCategory = 
-      selectedCategoryNames.includes('All Categories') || 
-      selectedCategoryNames.includes(q.categoryName);
-    
-    const matchesSearch = 
-      q.questionStem.toLowerCase().includes(searchQuery.toLowerCase()) || 
-      q.categoryName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      q.optionA.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      q.optionB.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      q.optionC.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      q.optionD.toLowerCase().includes(searchQuery.toLowerCase());
-      
-    const matchesSelection = showSelectedOnly ? selectedMCQIds.includes(q.id) : true;
-    
-    return matchesCategory && matchesSearch && matchesSelection;
-  });
+  const categoryFilters = selectedCategoryNames.includes('All Categories') ? [] : selectedCategoryNames;
+  const displayedMcqs = showSelectedOnly
+    ? mcqs.filter((q) => selectedMCQIds.includes(q.id))
+    : mcqs;
 
-  const paginatedMCQs = filteredMCQs.slice(0, visibleCount);
-  const hasMore = visibleCount < filteredMCQs.length;
+  const fetchFirstPage = async () => {
+    setIsRefreshingMcqs(true);
+    try {
+      const page = await loadMcqsPage(subject.id, categoryFilters, debouncedSearchQuery, null);
+      setMcqs(page.mcqs);
+      setNextCursor(page.nextCursor);
+    } catch {
+      showError('Unable to load questions. Please try again.');
+    } finally {
+      setIsRefreshingMcqs(false);
+    }
+  };
 
-  const handleLoadMore = () => {
+  useEffect(() => {
+    if (!hasMountedPagination.current) {
+      hasMountedPagination.current = true;
+      return;
+    }
+    void fetchFirstPage();
+  }, [selectedCategoryNames, debouncedSearchQuery]);
+
+  const handleLoadMore = async () => {
+    if (!nextCursor || isLoadingMore) return;
     setIsLoadingMore(true);
-    setTimeout(() => {
-      setVisibleCount((prev) => prev + ITEMS_PER_PAGE);
+    try {
+      const page = await loadMcqsPage(subject.id, categoryFilters, debouncedSearchQuery, nextCursor);
+      setMcqs((previous) => [...previous, ...page.mcqs]);
+      setNextCursor(page.nextCursor);
+    } catch {
+      showError('Unable to load more questions. Please try again.');
+    } finally {
       setIsLoadingMore(false);
-    }, 500);
+    }
   };
 
   const handleExport = (type: 'csv') => {
@@ -177,11 +191,13 @@ export default function QuestionBankClient({ subject, initialMcqs }: Props) {
               </h3>
               <button 
                 onClick={() => {
+                  if (isImporting) return;
                   setShowImportDialog(false);
                   setImportFile(null);
                   setImportError(null);
                 }}
-                className="text-lumina-text-muted hover:text-lumina-text transition-colors cursor-pointer"
+                disabled={isImporting}
+                className="text-lumina-text-muted hover:text-lumina-text transition-colors cursor-pointer disabled:cursor-not-allowed disabled:opacity-50"
               >
                 <X size={20} />
               </button>
@@ -212,7 +228,8 @@ export default function QuestionBankClient({ subject, initialMcqs }: Props) {
                     type="file"
                     accept=".csv"
                     onChange={(e) => setImportFile(e.target.files ? e.target.files[0] : null)}
-                    className="block w-full text-sm text-lumina-secondary file:mr-4 file:py-2 file:px-4 file:rounded file:border-0 file:text-sm file:font-semibold file:bg-lumina-primary/10 file:text-lumina-primary hover:file:bg-lumina-primary/20 cursor-pointer border border-lumina-border p-2 rounded"
+                    disabled={isImporting}
+                    className="block w-full text-sm text-lumina-secondary file:mr-4 file:py-2 file:px-4 file:rounded file:border-0 file:text-sm file:font-semibold file:bg-lumina-primary/10 file:text-lumina-primary hover:file:bg-lumina-primary/20 cursor-pointer border border-lumina-border p-2 rounded disabled:cursor-not-allowed disabled:opacity-50"
                   />
                 </div>
               </div>
@@ -220,16 +237,23 @@ export default function QuestionBankClient({ subject, initialMcqs }: Props) {
 
             <div className="p-6 border-t border-lumina-border bg-lumina-container-lowest flex justify-end gap-3">
               <button
-                onClick={() => setShowImportDialog(false)}
-                className="px-4 py-2 text-sm font-medium text-lumina-secondary hover:text-lumina-text transition-colors cursor-pointer"
+                onClick={() => {
+                  if (!isImporting) setShowImportDialog(false);
+                }}
+                disabled={isImporting}
+                className="px-4 py-2 text-sm font-medium text-lumina-secondary hover:text-lumina-text transition-colors cursor-pointer disabled:cursor-not-allowed disabled:opacity-50"
               >
                 Cancel
               </button>
               <button
                 onClick={handleImportSubmit}
-                className="px-4 py-2 bg-lumina-primary hover:bg-lumina-primary-hover text-lumina-on-primary rounded text-sm font-semibold transition-all cursor-pointer"
+                disabled={isImporting}
+                className="px-4 py-2 bg-lumina-primary hover:bg-lumina-primary-hover text-lumina-on-primary rounded text-sm font-semibold transition-all cursor-pointer disabled:cursor-wait disabled:opacity-80"
               >
-                Import Questions
+                <span className="flex items-center gap-2">
+                  {isImporting && <LoaderCircle size={16} className="animate-spin" />}
+                  {isImporting ? 'Importing…' : 'Import Questions'}
+                </span>
               </button>
             </div>
           </div>
@@ -301,10 +325,18 @@ export default function QuestionBankClient({ subject, initialMcqs }: Props) {
 
           <Link
             href={`/subject/${subject.id}/question/new`}
-            className="py-2 px-3.5 bg-lumina-primary hover:bg-lumina-primary-hover text-lumina-on-primary rounded text-sm font-sans font-semibold flex items-center gap-2 transition-all active:scale-[0.98] cursor-pointer"
+            onClick={(event) => {
+              if (isNavigatingToNewMcq) {
+                event.preventDefault();
+                return;
+              }
+              setIsNavigatingToNewMcq(true);
+            }}
+            aria-disabled={isNavigatingToNewMcq}
+            className="py-2 px-3.5 bg-lumina-primary hover:bg-lumina-primary-hover text-lumina-on-primary rounded text-sm font-sans font-semibold flex items-center gap-2 transition-all active:scale-[0.98] cursor-pointer aria-disabled:cursor-wait aria-disabled:opacity-80"
           >
-            <Plus size={14} />
-            <span>New MCQ</span>
+            {isNavigatingToNewMcq ? <LoaderCircle size={14} className="animate-spin" /> : <Plus size={14} />}
+            <span>{isNavigatingToNewMcq ? 'Opening…' : 'New MCQ'}</span>
           </Link>
         </div>
       </div>
@@ -383,27 +415,37 @@ export default function QuestionBankClient({ subject, initialMcqs }: Props) {
           )}
 
           <div className="ml-auto text-xs text-lumina-text-muted font-mono select-none">
-            Showing <span className="text-lumina-text font-semibold">{paginatedMCQs.length}</span> of <span className="text-lumina-text font-semibold">{filteredMCQs.length}</span> Questions
+            Showing <span className="text-lumina-text font-semibold">{displayedMcqs.length}</span> Question{displayedMcqs.length === 1 ? '' : 's'}
           </div>
         </div>
       </div>
 
-      {paginatedMCQs.length === 0 ? (
+      {displayedMcqs.length === 0 ? (
         <div className="border border-dashed border-lumina-border rounded-lg py-16 text-center">
-          <HelpCircle className="mx-auto text-lumina-text-muted mb-3" size={32} />
-          <p className="font-sans font-semibold text-lg text-lumina-text mb-1">No questions found</p>
-          <p className="text-xs text-lumina-text-muted max-w-sm mx-auto">
-            Try adjusting your search filters or click "+ New MCQ" to generate standard questions.
-          </p>
+          {isRefreshingMcqs ? (
+            <>
+              <LoaderCircle className="mx-auto animate-spin text-lumina-primary mb-3" size={32} />
+              <p className="font-sans font-semibold text-lg text-lumina-text">Loading questions…</p>
+            </>
+          ) : (
+            <>
+              <HelpCircle className="mx-auto text-lumina-text-muted mb-3" size={32} />
+              <p className="font-sans font-semibold text-lg text-lumina-text mb-1">No questions found</p>
+              <p className="text-xs text-lumina-text-muted max-w-sm mx-auto">
+                Try adjusting your search filters or click "+ New MCQ" to generate standard questions.
+              </p>
+            </>
+          )}
         </div>
       ) : (
         <div className="flex flex-col gap-6">
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            {paginatedMCQs.map((q, idx) => {
+            {displayedMcqs.map((q, idx) => {
               const isSelectedCard = selectedMCQIds.includes(q.id);
+              const isDeleting = deletingMcqId === q.id;
               
               const handleCardClick = () => {
-                if (!isSelectionMode) return;
+                if (!isSelectionMode || isDeleting) return;
                 if (isSelectedCard) {
                   setSelectedMCQIds(prev => prev.filter(id => id !== q.id));
                 } else {
@@ -428,6 +470,18 @@ export default function QuestionBankClient({ subject, initialMcqs }: Props) {
                     isSelectedCard ? 'border-lumina-primary ring-1 ring-lumina-primary shadow-sm bg-lumina-primary/5' : 'border-lumina-border hover:border-lumina-primary/30'
                   }`}
                 >
+                  {isDeleting && (
+                    <div
+                      className="absolute inset-0 z-20 flex items-start justify-center rounded-lg bg-lumina-container-low/75 pt-5 backdrop-blur-[1px]"
+                      role="status"
+                      aria-label="Deleting MCQ"
+                    >
+                      <span className="flex items-center gap-2 rounded-md border border-lumina-border bg-lumina-container px-3 py-2 text-xs font-medium text-lumina-text shadow-sm">
+                        <LoaderCircle size={16} className="animate-spin text-lumina-primary" />
+                        Deleting…
+                      </span>
+                    </div>
+                  )}
                   <div className="flex items-center justify-between mb-4 select-none">
                     <div className="flex items-center gap-2">
                       <span className="font-mono text-[10px] font-bold text-lumina-primary tracking-widest uppercase">
@@ -512,9 +566,11 @@ export default function QuestionBankClient({ subject, initialMcqs }: Props) {
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
+                        if (isDeleting) return;
                         router.push(`/subject/${subject.id}/question/${q.id}/edit`);
                       }}
-                      className="p-1 rounded hover:bg-lumina-container-lowest hover:text-lumina-primary text-lumina-secondary transition-colors cursor-pointer"
+                      disabled={isDeleting}
+                      className="p-1 rounded hover:bg-lumina-container-lowest hover:text-lumina-primary text-lumina-secondary transition-colors cursor-pointer disabled:cursor-not-allowed disabled:opacity-50"
                       title="Edit MCQ"
                     >
                       <Edit size={12} />
@@ -522,9 +578,17 @@ export default function QuestionBankClient({ subject, initialMcqs }: Props) {
                     <button
                       onClick={async (e) => {
                         e.stopPropagation();
-                        await deleteMcq(q.id, subject.id);
+                        if (isDeleting) return;
+
+                        setDeletingMcqId(q.id);
+                        try {
+                          await deleteMcq(q.id, subject.id);
+                        } finally {
+                          setDeletingMcqId(null);
+                        }
                       }}
-                      className="p-1 rounded hover:bg-red-50 hover:text-red-600 text-lumina-secondary transition-colors cursor-pointer"
+                      disabled={isDeleting}
+                      className="p-1 rounded hover:bg-red-50 hover:text-red-600 text-lumina-secondary transition-colors cursor-pointer disabled:cursor-not-allowed disabled:opacity-50"
                       title="Delete MCQ"
                     >
                       <Trash2 size={12} />
@@ -534,6 +598,18 @@ export default function QuestionBankClient({ subject, initialMcqs }: Props) {
               );
             })}
           </div>
+          {!showSelectedOnly && nextCursor && (
+            <div className="flex justify-center">
+              <button
+                onClick={handleLoadMore}
+                disabled={isLoadingMore || isRefreshingMcqs}
+                className="min-w-36 py-2.5 px-4 rounded border border-lumina-border bg-lumina-container text-sm font-semibold text-lumina-secondary hover:text-lumina-primary hover:bg-lumina-container-low transition-colors cursor-pointer disabled:cursor-wait disabled:opacity-70 flex items-center justify-center gap-2"
+              >
+                {isLoadingMore && <LoaderCircle size={16} className="animate-spin" />}
+                {isLoadingMore ? 'Loading…' : 'Load more'}
+              </button>
+            </div>
+          )}
         </div>
       )}
     </div>
