@@ -1,30 +1,34 @@
-import React, { useState } from 'react';
+"use client";
+
+import React, { useState, useEffect } from 'react';
 import { 
   LayoutDashboard, 
   HelpCircle,
   ChevronLeft,
   ChevronRight
 } from 'lucide-react';
-import { ActiveView } from '../App';
+import Link from 'next/link';
+import { usePathname } from 'next/navigation';
 
-interface SidebarProps {
-  currentView: ActiveView;
-  setCurrentView: (view: ActiveView) => void;
-  onCreateNewMCQ: () => void;
-}
+export default function Sidebar() {
+  const pathname = usePathname();
+  const [isCollapsed, setIsCollapsed] = useState(false);
+  const [isMounted, setIsMounted] = useState(false);
 
-export default function Sidebar({ currentView, setCurrentView, onCreateNewMCQ }: SidebarProps) {
-  const [isCollapsed, setIsCollapsed] = useState(() => {
+  useEffect(() => {
+    setIsMounted(true);
     try {
       const saved = localStorage.getItem('sidebar-collapsed');
-      return saved === 'true';
+      if (saved === 'true') {
+        setIsCollapsed(true);
+      }
     } catch {
-      return false;
+      // ignore
     }
-  });
+  }, []);
 
   const menuItems = [
-    { id: 'dashboard' as ActiveView, label: 'Dashboard', icon: LayoutDashboard },
+    { href: '/', label: 'Dashboard', icon: LayoutDashboard },
   ];
 
   const handleToggleCollapse = () => {
@@ -38,6 +42,8 @@ export default function Sidebar({ currentView, setCurrentView, onCreateNewMCQ }:
       return next;
     });
   };
+
+  if (!isMounted) return <aside className="bg-lumina-surface border-r border-lumina-border flex flex-col justify-between h-screen sticky top-0 shrink-0 select-none transition-all duration-300 w-64"></aside>;
 
   return (
     <aside className={`bg-lumina-surface border-r border-lumina-border flex flex-col justify-between h-screen sticky top-0 shrink-0 select-none transition-all duration-300 ${
@@ -75,11 +81,11 @@ export default function Sidebar({ currentView, setCurrentView, onCreateNewMCQ }:
         <nav className="mt-8 space-y-1.5">
           {menuItems.map((item) => {
             const Icon = item.icon;
-            const isActive = currentView === item.id;
+            const isActive = pathname === item.href || (item.href !== '/' && pathname?.startsWith(item.href));
             return (
-              <button
-                key={item.id}
-                onClick={() => setCurrentView(item.id)}
+              <Link
+                key={item.href}
+                href={item.href}
                 className={`w-full py-2.5 rounded-md flex items-center transition-all relative ${
                   isCollapsed ? 'justify-center px-0' : 'px-4 gap-3 text-left'
                 } ${
@@ -94,7 +100,7 @@ export default function Sidebar({ currentView, setCurrentView, onCreateNewMCQ }:
                 {isActive && !isCollapsed && (
                   <span className="absolute right-3 w-1.5 h-1.5 rounded-full bg-lumina-primary" />
                 )}
-              </button>
+              </Link>
             );
           })}
         </nav>
@@ -116,4 +122,3 @@ export default function Sidebar({ currentView, setCurrentView, onCreateNewMCQ }:
     </aside>
   );
 }
-

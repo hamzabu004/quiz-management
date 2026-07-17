@@ -1,0 +1,23 @@
+version: "3.9"
+
+services:
+  postgres:
+    image: postgres:latest
+    container_name: mcq-postgres
+    restart: unless-stopped
+
+    environment:
+      POSTGRES_USER: neondb_owner
+      POSTGRES_PASSWORD: npg_wVlI5NQLbxk7
+      POSTGRES_DB: neondb
+      PGDATA: /var/lib/postgresql/data/pgdata
+
+    ports:
+      - "5433:5432"
+
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init:/docker-entrypoint-initdb.d
+
+volumes:
+  postgres_data:

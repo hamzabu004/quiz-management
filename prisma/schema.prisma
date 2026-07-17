@@ -1,0 +1,101 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+  id           String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  email        String      @unique @db.VarChar(255)
+  displayName  String      @map("display_name") @db.VarChar(150)
+  isActive     Boolean     @default(true) @map("is_active")
+  createdAt    DateTime    @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt    DateTime    @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  classrooms   Classroom[]
+  subjects     Subject[]
+  categories   Category[]
+  mcqs         Mcq[]
+
+  @@map("app_user")
+}
+
+model Classroom {
+  id             String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  createdBy      String      @default("00000000-0000-0000-0000-000000000001") @map("created_by") @db.Uuid
+  classroomName  String      @map("classroom_name") @db.VarChar(150)
+  subjectCount   Int         @default(0) @map("subject_count")
+  createdAt      DateTime    @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt      DateTime    @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  creator        User        @relation(fields: [createdBy], references: [id])
+  subjects       Subject[]
+
+  @@map("classroom")
+}
+
+model Subject {
+  id             String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  classroomId    String      @map("classroom_id") @db.Uuid
+  createdBy      String      @default("00000000-0000-0000-0000-000000000001") @map("created_by") @db.Uuid
+  subjectName    String      @map("subject_name") @db.VarChar(150)
+  categoryCount  Int         @default(0) @map("category_count")
+  mcqCount       Int         @default(0) @map("mcq_count")
+  createdAt      DateTime    @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt      DateTime    @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  classroom      Classroom   @relation(fields: [classroomId], references: [id], onDelete: Cascade)
+  creator        User        @relation(fields: [createdBy], references: [id])
+  categories     Category[]
+  mcqs           Mcq[]
+
+  @@map("subject")
+}
+
+model Category {
+  id             String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  subjectId      String      @map("subject_id") @db.Uuid
+  createdBy      String      @default("00000000-0000-0000-0000-000000000001") @map("created_by") @db.Uuid
+  categoryName   String      @map("category_name") @db.VarChar(150)
+  createdAt      DateTime    @default(now()) @map("created_at") @db.Timestamptz
+
+  subject        Subject     @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+  creator        User        @relation(fields: [createdBy], references: [id])
+  mcqs           CategoryMcq[]
+
+  @@map("category")
+}
+
+model Mcq {
+  id             String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  subjectId      String      @map("subject_id") @db.Uuid
+  createdBy      String      @default("00000000-0000-0000-0000-000000000001") @map("created_by") @db.Uuid
+  questionStem   String      @map("question_stem") @db.Text
+  optionA        String      @map("option_a") @db.VarChar(500)
+  optionB        String      @map("option_b") @db.VarChar(500)
+  optionC        String      @map("option_c") @db.VarChar(500)
+  optionD        String      @map("option_d") @db.VarChar(500)
+  answer         String      @db.Char(1)
+  explanation    String?     @db.Text
+  createdAt      DateTime    @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt      DateTime    @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  subject        Subject     @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+  creator        User        @relation(fields: [createdBy], references: [id])
+  categories     CategoryMcq[]
+
+  @@map("mcq")
+}
+
+model CategoryMcq {
+  categoryId     String      @map("category_id") @db.Uuid
+  mcqId          String      @map("mcq_id") @db.Uuid
+
+  category       Category    @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  mcq            Mcq         @relation(fields: [mcqId], references: [id], onDelete: Cascade)
+
+  @@id([categoryId, mcqId])
+  @@map("category_mcq")
+}
