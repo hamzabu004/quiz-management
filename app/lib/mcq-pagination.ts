@@ -1,5 +1,7 @@
-import { Prisma } from '@prisma/client';
 import prisma from '../../src/lib/prisma';
+
+type McqFindManyArgs = NonNullable<Parameters<typeof prisma.mcq.findMany>[0]>;
+type McqWhereInput = NonNullable<McqFindManyArgs['where']>;
 
 export const MCQS_PER_PAGE = 12;
 
@@ -32,7 +34,7 @@ export async function getMcqsPage({
   cursor?: string | null;
 }): Promise<McqPage> {
   const normalizedSearch = searchQuery.trim();
-  const where: Prisma.McqWhereInput = { subjectId };
+  const where: McqWhereInput = { subjectId };
 
   if (categoryNames.length > 0) {
     where.categories = {
