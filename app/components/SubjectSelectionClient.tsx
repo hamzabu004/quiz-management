@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState } from 'react';
-import { Plus, X, MoreVertical } from 'lucide-react';
+import { Plus, X, MoreVertical, LoaderCircle } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
@@ -29,6 +29,7 @@ export default function SubjectSelectionClient({ classroom, initialSubjects }: P
   const [showAddModal, setShowAddModal] = useState(false);
   const [newSubjectName, setNewSubjectName] = useState('');
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
+  const [navigatingTo, setNavigatingTo] = useState<string | null>(null);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -50,7 +51,11 @@ export default function SubjectSelectionClient({ classroom, initialSubjects }: P
   };
 
   const handleSelectSubject = (id: string) => {
-    router.push(`/subject/${id}`);
+    if (navigatingTo) return;
+    setNavigatingTo(id);
+    setTimeout(() => {
+      router.push(`/subject/${id}`);
+    }, 0);
   };
 
   return (
@@ -89,8 +94,13 @@ export default function SubjectSelectionClient({ classroom, initialSubjects }: P
           <div
             key={subj.id}
             onClick={() => handleSelectSubject(subj.id)}
-            className="bg-lumina-container-low border border-lumina-border hover:border-lumina-primary/40 rounded-lg p-6 relative group transition-all duration-300 flex flex-col justify-between cursor-pointer h-32 hover:shadow-[0_4px_30px_rgba(87,241,219,0.03)] active:scale-[0.99]"
+            className={`bg-lumina-container-low border hover:border-lumina-primary/40 rounded-lg p-6 relative group transition-all duration-300 flex flex-col justify-between cursor-pointer h-32 hover:shadow-[0_4px_30px_rgba(87,241,219,0.03)] active:scale-[0.99] ${navigatingTo === subj.id ? 'border-lumina-primary opacity-80' : 'border-lumina-border'}`}
           >
+            {navigatingTo === subj.id && (
+              <div className="absolute inset-0 z-10 flex items-center justify-center rounded-lg bg-lumina-container-low/50 backdrop-blur-[1px]">
+                <LoaderCircle size={24} className="animate-spin text-lumina-primary" />
+              </div>
+            )}
             <div>
               <div className="flex items-center justify-end mb-5">
                 <div className="relative">

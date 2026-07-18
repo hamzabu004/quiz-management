@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState } from 'react';
-import { MoreVertical, Plus, Check, X } from 'lucide-react';
+import { MoreVertical, Plus, Check, X, LoaderCircle } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useRouter } from 'next/navigation';
 import { createClassroom, deleteClassroom } from '../actions/classroom';
@@ -21,6 +21,7 @@ export default function ClassroomSelectionClient({ initialClassrooms }: Props) {
   const [showAddModal, setShowAddModal] = useState(false);
   const [newClassName, setNewClassName] = useState('');
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
+  const [navigatingTo, setNavigatingTo] = useState<string | null>(null);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -42,7 +43,11 @@ export default function ClassroomSelectionClient({ initialClassrooms }: Props) {
   };
 
   const handleSelectClassroom = (id: string) => {
-    router.push(`/classroom/${id}`);
+    if (navigatingTo) return;
+    setNavigatingTo(id);
+    setTimeout(() => {
+      router.push(`/classroom/${id}`);
+    }, 0);
   };
 
   return (
@@ -68,8 +73,13 @@ export default function ClassroomSelectionClient({ initialClassrooms }: Props) {
           <div
             key={cohort.id}
             onClick={() => handleSelectClassroom(cohort.id)}
-            className="bg-lumina-container-low border border-lumina-border hover:border-lumina-primary/40 rounded-lg p-6 relative group transition-all duration-300 flex flex-col justify-between cursor-pointer h-32 hover:shadow-[0_4px_30px_rgba(87,241,219,0.03)] active:scale-[0.99]"
+            className={`bg-lumina-container-low border hover:border-lumina-primary/40 rounded-lg p-6 relative group transition-all duration-300 flex flex-col justify-between cursor-pointer h-32 hover:shadow-[0_4px_30px_rgba(87,241,219,0.03)] active:scale-[0.99] ${navigatingTo === cohort.id ? 'border-lumina-primary opacity-80' : 'border-lumina-border'}`}
           >
+            {navigatingTo === cohort.id && (
+              <div className="absolute inset-0 z-10 flex items-center justify-center rounded-lg bg-lumina-container-low/50 backdrop-blur-[1px]">
+                <LoaderCircle size={24} className="animate-spin text-lumina-primary" />
+              </div>
+            )}
             <div>
               <div className="flex justify-end mb-2">
                 <div className="relative">
