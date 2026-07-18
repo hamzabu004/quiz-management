@@ -57,7 +57,7 @@ export async function POST(request: NextRequest) {
     if (!generateResponse.ok) {
       const err = await generateResponse.text();
       console.error('Docx generation failed:', err);
-      return NextResponse.json({ error: 'Failed to generate document from service', actual_err: err }, { status: 500 });
+      return NextResponse.json({ error: 'Failed to generate document from service', "actual_err": err }, { status: 500 });
     }
 
     const docxBuffer = await generateResponse.arrayBuffer();
