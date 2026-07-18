@@ -56,6 +56,7 @@ export default function QuestionBankClient({ subject, initialMcqs, initialNextCu
   const [debouncedSearchQuery, setDebouncedSearchQuery] = useState('');
   const [deletingMcqId, setDeletingMcqId] = useState<string | null>(null);
   const [isNavigatingToNewMcq, setIsNavigatingToNewMcq] = useState(false);
+  const [isExportingDocx, setIsExportingDocx] = useState(false);
 
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [isRefreshingMcqs, setIsRefreshingMcqs] = useState(false);
@@ -163,7 +164,7 @@ export default function QuestionBankClient({ subject, initialMcqs, initialNextCu
     }
   };
 
-  const handleExport = (type: 'csv' | 'pdf' | 'latex' | 'docx') => {
+  const handleExport = async (type: 'csv' | 'pdf' | 'latex' | 'docx') => {
     if (type === 'csv') {
       window.location.href = `/api/export?ids=${selectedMCQIds.join(',')}`;
     } else if (type === 'pdf') {
@@ -254,6 +255,36 @@ export default function QuestionBankClient({ subject, initialMcqs, initialNextCu
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
+    } else if (type === 'docx') {
+      setIsExportingDocx(true);
+      setShowExportDropdown(false);
+      try {
+        const response = await fetch('/api/export/docx', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ids: selectedMCQIds, subjectId: subject.id })
+        });
+        
+        if (!response.ok) {
+          const errorData = await response.json();
+          throw new Error(errorData.error || 'Failed to export DOCX');
+        }
+        
+        const blob = await response.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `mcqs_export_${new Date().toISOString().split('T')[0]}.docx`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      } catch (err: any) {
+        showError(err.message || 'An error occurred while exporting DOCX');
+      } finally {
+        setIsExportingDocx(false);
+      }
+      return; // prevent setShowExportDropdown(false) again
     }
     setShowExportDropdown(false);
   };
@@ -375,8 +406,8 @@ export default function QuestionBankClient({ subject, initialMcqs, initialNextCu
               }`}
             >
               <Download size={14} />
-              <span>Export</span>
-              <ChevronDown size={14} />
+              <span>{isExportingDocx ? 'Exporting...' : 'Export'}</span>
+              {isExportingDocx ? <LoaderCircle size={14} className="animate-spin" /> : <ChevronDown size={14} />}
             </button>
 
             {showExportDropdown && (
@@ -401,11 +432,10 @@ export default function QuestionBankClient({ subject, initialMcqs, initialNextCu
                 </button>
                 <button
                   onClick={() => handleExport('docx')}
-                  disabled
-                  className="w-full text-left px-4 py-2 text-xs text-lumina-text-muted cursor-not-allowed opacity-50"
-                  title="Coming soon via server-side"
+                  disabled={isExportingDocx}
+                  className="w-full text-left px-4 py-2 text-xs text-lumina-secondary hover:bg-lumina-container-lowest hover:text-lumina-primary transition-colors cursor-pointer disabled:opacity-50"
                 >
-                  Export DOCX (Coming soon)
+                  Export DOCX
                 </button>
               </div>
             )}
