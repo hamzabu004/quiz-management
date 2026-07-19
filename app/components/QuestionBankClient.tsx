@@ -1,8 +1,8 @@
 "use client";
 
 import React, { useState, useEffect, useRef } from 'react';
-import { 
-  Plus, Download, ChevronDown, Edit, Trash2, Check, 
+import {
+  Plus, Download, ChevronDown, Copy, Edit, Trash2, Check,
   ArrowLeft, Sparkles, HelpCircle, Upload, X, Search, LoaderCircle
 } from 'lucide-react';
 import { formatLaTeX } from '../../src/utils';
@@ -37,6 +37,11 @@ interface Props {
   initialNextCursor: string | null;
 }
 
+const CHATBOT_IMPORT_PROMPT = `Convert the provided material into multiple-choice questions and return only a valid CSV using this exact header:
+Stem,Category,Option_A,Option_B,Option_C,Option_D,Correct_Answer,Explanation
+
+Convert every equation to inline LaTeX math using $...$. Set Category to General for every question. Keep explanations concise. Use only A, B, C, or D in Correct_Answer. Quote every CSV field that contains a comma, double quote, or line break. Generate a downloadable csv.`;
+
 export default function QuestionBankClient({ subject, initialMcqs, initialNextCursor }: Props) {
   const router = useRouter();
   const [mcqs, setMcqs] = useState<PaginatedMcq[]>(initialMcqs);
@@ -44,12 +49,14 @@ export default function QuestionBankClient({ subject, initialMcqs, initialNextCu
   const [selectedCategoryNames, setSelectedCategoryNames] = useState<string[]>(['All Categories']);
   const [showExportDropdown, setShowExportDropdown] = useState(false);
   const [expandedExplanations, setExpandedExplanations] = useState<Record<string, boolean>>({});
-  
+
   const [showImportDialog, setShowImportDialog] = useState(false);
   const [importFile, setImportFile] = useState<File | null>(null);
   const [importPreview, setImportPreview] = useState<CsvImportMcq[] | null>(null);
   const [csvImportCategories, setCsvImportCategories] = useState<string[]>([]);
   const [bulkImportCategory, setBulkImportCategory] = useState('');
+  const [additionalImportPrompt, setAdditionalImportPrompt] = useState('');
+  const [isImportPromptCopied, setIsImportPromptCopied] = useState(false);
   const [importError, setImportError] = useState<string | null>(null);
   const [isParsingImport, setIsParsingImport] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
@@ -89,7 +96,23 @@ export default function QuestionBankClient({ subject, initialMcqs, initialNextCu
     setImportPreview(null);
     setCsvImportCategories([]);
     setBulkImportCategory('');
+    setAdditionalImportPrompt('');
+    setIsImportPromptCopied(false);
     setImportError(null);
+  };
+
+  const chatbotImportPrompt = additionalImportPrompt.trim()
+    ? `${CHATBOT_IMPORT_PROMPT}\n\nAdditional requirements:\n${additionalImportPrompt.trim()}`
+    : CHATBOT_IMPORT_PROMPT;
+
+  const copyChatbotImportPrompt = async () => {
+    try {
+      await navigator.clipboard.writeText(chatbotImportPrompt);
+      setIsImportPromptCopied(true);
+      window.setTimeout(() => setIsImportPromptCopied(false), 2000);
+    } catch {
+      showError('Unable to copy the prompt. Please select and copy it manually.');
+    }
   };
 
   const handleImportFileSelected = async (file: File | null) => {
@@ -134,6 +157,8 @@ export default function QuestionBankClient({ subject, initialMcqs, initialNextCu
       setImportPreview(null);
       setCsvImportCategories([]);
       setBulkImportCategory('');
+      setAdditionalImportPrompt('');
+      setIsImportPromptCopied(false);
       router.refresh();
       await fetchFirstPage();
     } catch (error) {
@@ -243,9 +268,8 @@ export default function QuestionBankClient({ subject, initialMcqs, initialNextCu
 
       {showImportDialog && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
-          <div className={`bg-lumina-surface rounded-lg shadow-2xl w-full overflow-hidden flex max-h-[92vh] flex-col border border-lumina-border ${
-            importPreview ? 'max-w-6xl' : 'max-w-xl'
-          }`}>
+          <div className={`bg-lumina-surface rounded-lg shadow-2xl w-full overflow-hidden flex max-h-[92vh] flex-col border border-lumina-border ${importPreview ? 'max-w-6xl' : 'max-w-xl'
+            }`}>
             <div className="p-6 border-b border-lumina-border flex justify-between items-center bg-lumina-container-lowest">
               <div>
                 <h3 className="font-sans font-semibold text-xl text-lumina-text flex items-center gap-2">
@@ -258,7 +282,7 @@ export default function QuestionBankClient({ subject, initialMcqs, initialNextCu
                   </p>
                 )}
               </div>
-              <button 
+              <button
                 onClick={closeImportDialog}
                 disabled={isParsingImport || isImporting}
                 className="text-lumina-text-muted hover:text-lumina-text transition-colors cursor-pointer disabled:cursor-not-allowed disabled:opacity-50"
@@ -286,6 +310,53 @@ export default function QuestionBankClient({ subject, initialMcqs, initialNextCu
                       Stem,Category,Option_A,Option_B,Option_C,Option_D,Correct_Answer,Explanation
                     </div>
                   </div>
+
+                  <section className="rounded-lg border border-violet-500/25 bg-violet-500/5 p-4">
+                    <div className="flex items-start gap-3">
+                      <Sparkles size={18} className="mt-0.5 shrink-0 text-violet-600" />
+                      <div>
+                        <h4 className="text-sm font-semibold text-lumina-text">
+                          Copy this prompt to your chatbot
+                        </h4>
+                        <p className="mt-1 text-xs leading-relaxed text-lumina-text-muted">
+                          Paste it along with your source material. Add another instruction below if you have specific requirements.
+                        </p>
+                      </div>
+                    </div>
+
+                    <textarea
+                      readOnly
+                      value={chatbotImportPrompt}
+                      aria-label="Chatbot CSV generation prompt"
+                      className="mt-4 h-40 w-full resize-none rounded border border-lumina-border bg-lumina-container-lowest p-3 font-mono text-[11px] leading-relaxed text-lumina-secondary outline-none focus:border-lumina-primary focus:ring-1 focus:ring-lumina-primary"
+                    />
+
+                    <label className="mt-3 block">
+                      <span className="mb-1.5 block text-xs font-semibold text-lumina-text">
+                        Additional requirements <span className="font-normal text-lumina-text-muted">(optional)</span>
+                      </span>
+                      <textarea
+                        value={additionalImportPrompt}
+                        onChange={(event) => {
+                          setAdditionalImportPrompt(event.target.value);
+                          setIsImportPromptCopied(false);
+                        }}
+                        placeholder="Example: Generate 20 difficult questions and avoid repeated concepts."
+                        className="h-20 w-full resize-y rounded border border-lumina-border bg-lumina-container-lowest p-3 text-xs text-lumina-text placeholder:text-lumina-text-muted outline-none focus:border-lumina-primary focus:ring-1 focus:ring-lumina-primary"
+                      />
+                    </label>
+
+                    <div className="mt-3 flex justify-end">
+                      <button
+                        type="button"
+                        onClick={() => void copyChatbotImportPrompt()}
+                        className="inline-flex items-center gap-2 rounded bg-violet-600 px-3 py-2 text-xs font-semibold text-white transition-colors hover:bg-violet-700"
+                      >
+                        {isImportPromptCopied ? <Check size={14} /> : <Copy size={14} />}
+                        <span aria-live="polite">{isImportPromptCopied ? 'Prompt Copied' : 'Copy Prompt'}</span>
+                      </button>
+                    </div>
+                  </section>
 
                   <div className="mt-6 border-t border-lumina-border pt-4">
                     <h4 className="text-sm font-semibold text-lumina-text mb-2">Select CSV File</h4>
@@ -360,17 +431,15 @@ export default function QuestionBankClient({ subject, initialMcqs, initialNextCu
                               return (
                                 <div
                                   key={option.label}
-                                  className={`flex items-start gap-2.5 rounded border p-3 text-xs ${
-                                    isCorrect
+                                  className={`flex items-start gap-2.5 rounded border p-3 text-xs ${isCorrect
                                       ? 'border-lumina-primary bg-lumina-primary/5 text-lumina-primary'
                                       : 'border-lumina-border bg-lumina-container-lowest text-lumina-secondary'
-                                  }`}
+                                    }`}
                                 >
-                                  <span className={`flex h-5 w-5 shrink-0 items-center justify-center rounded border font-mono text-[10px] font-bold ${
-                                    isCorrect
+                                  <span className={`flex h-5 w-5 shrink-0 items-center justify-center rounded border font-mono text-[10px] font-bold ${isCorrect
                                       ? 'border-lumina-primary bg-lumina-primary text-lumina-on-primary'
                                       : 'border-lumina-border bg-lumina-container-low text-lumina-text-muted'
-                                  }`}>
+                                    }`}>
                                     {option.label}
                                   </span>
                                   <span dangerouslySetInnerHTML={{ __html: formatLaTeX(option.text) }} />
@@ -459,11 +528,10 @@ export default function QuestionBankClient({ subject, initialMcqs, initialNextCu
             <button
               onClick={() => setShowExportDropdown(!showExportDropdown)}
               disabled={!isSelectionMode || selectedMCQIds.length === 0}
-              className={`py-2 px-3.5 border rounded text-sm font-sans font-semibold flex items-center gap-2 transition-all ${
-                !isSelectionMode || selectedMCQIds.length === 0
+              className={`py-2 px-3.5 border rounded text-sm font-sans font-semibold flex items-center gap-2 transition-all ${!isSelectionMode || selectedMCQIds.length === 0
                   ? 'bg-lumina-container/50 border-lumina-border/50 text-lumina-secondary/50 cursor-not-allowed'
                   : 'bg-lumina-container hover:bg-lumina-container-low border-lumina-border text-lumina-secondary hover:text-lumina-primary cursor-pointer'
-              }`}
+                }`}
             >
               <Download size={14} />
               <span>Export</span>
@@ -502,11 +570,10 @@ export default function QuestionBankClient({ subject, initialMcqs, initialNextCu
 
           <button
             onClick={() => setIsSelectionMode(!isSelectionMode)}
-            className={`py-2 px-3.5 border rounded text-sm font-sans font-semibold flex items-center gap-2 transition-all cursor-pointer ${
-              isSelectionMode 
-                ? 'bg-lumina-primary/10 border-lumina-primary/30 text-lumina-primary' 
+            className={`py-2 px-3.5 border rounded text-sm font-sans font-semibold flex items-center gap-2 transition-all cursor-pointer ${isSelectionMode
+                ? 'bg-lumina-primary/10 border-lumina-primary/30 text-lumina-primary'
                 : 'bg-lumina-container hover:bg-lumina-container-low border-lumina-border text-lumina-secondary hover:text-lumina-primary'
-            }`}
+              }`}
           >
             <Check size={14} />
             <span>Select Mode {selectedMCQIds.length > 0 ? `(${selectedMCQIds.length})` : ''}</span>
@@ -561,26 +628,24 @@ export default function QuestionBankClient({ subject, initialMcqs, initialNextCu
 
           <button
             onClick={() => handleCategoryClick('All Categories')}
-            className={`py-1.5 px-3 rounded text-xs font-sans transition-all cursor-pointer ${
-              selectedCategoryNames.includes('All Categories')
+            className={`py-1.5 px-3 rounded text-xs font-sans transition-all cursor-pointer ${selectedCategoryNames.includes('All Categories')
                 ? 'bg-lumina-primary/10 text-lumina-primary border border-lumina-primary/30 font-medium'
                 : 'bg-lumina-container-lowest text-lumina-secondary border border-transparent hover:border-lumina-border hover:text-lumina-primary'
-            }`}
+              }`}
           >
             All Categories
           </button>
-          
+
           {subject.categories.map((cat) => {
             const isSelected = selectedCategoryNames.includes(cat.categoryName);
             return (
               <button
                 key={cat.id}
                 onClick={() => handleCategoryClick(cat.categoryName)}
-                className={`py-1.5 px-3 rounded text-xs font-sans transition-all cursor-pointer ${
-                  isSelected
+                className={`py-1.5 px-3 rounded text-xs font-sans transition-all cursor-pointer ${isSelected
                     ? 'bg-lumina-primary/10 text-lumina-primary border border-lumina-primary/30 font-medium'
                     : 'bg-lumina-container-lowest text-lumina-secondary border border-transparent hover:border-lumina-border hover:text-lumina-primary'
-                }`}
+                  }`}
               >
                 {cat.categoryName}
               </button>
@@ -592,11 +657,10 @@ export default function QuestionBankClient({ subject, initialMcqs, initialNextCu
               <div className="w-[1px] h-6 bg-lumina-border mx-1"></div>
               <button
                 onClick={() => setShowSelectedOnly(!showSelectedOnly)}
-                className={`py-1.5 px-3 rounded text-xs font-sans transition-all cursor-pointer flex items-center gap-1.5 ${
-                  showSelectedOnly
+                className={`py-1.5 px-3 rounded text-xs font-sans transition-all cursor-pointer flex items-center gap-1.5 ${showSelectedOnly
                     ? 'bg-lumina-primary/10 text-lumina-primary border border-lumina-primary/30 font-medium'
                     : 'bg-lumina-container-lowest text-lumina-secondary border border-transparent hover:border-lumina-border hover:text-lumina-primary'
-                }`}
+                  }`}
               >
                 <span>Selected Only ({selectedMCQIds.length})</span>
               </button>
@@ -640,7 +704,7 @@ export default function QuestionBankClient({ subject, initialMcqs, initialNextCu
             {displayedMcqs.map((q, idx) => {
               const isSelectedCard = selectedMCQIds.includes(q.id);
               const isDeleting = deletingMcqId === q.id;
-              
+
               const handleCardClick = () => {
                 if (!isSelectionMode || isDeleting) return;
                 if (isSelectedCard) {
@@ -661,11 +725,9 @@ export default function QuestionBankClient({ subject, initialMcqs, initialNextCu
                 <div
                   key={q.id}
                   onClick={handleCardClick}
-                  className={`bg-lumina-container-low border rounded-lg p-5 relative group transition-all ${
-                    isSelectionMode ? 'cursor-pointer hover:border-lumina-primary/50' : ''
-                  } ${
-                    isSelectedCard ? 'border-lumina-primary ring-1 ring-lumina-primary shadow-sm bg-lumina-primary/5' : 'border-lumina-border hover:border-lumina-primary/30'
-                  }`}
+                  className={`bg-lumina-container-low border rounded-lg p-5 relative group transition-all ${isSelectionMode ? 'cursor-pointer hover:border-lumina-primary/50' : ''
+                    } ${isSelectedCard ? 'border-lumina-primary ring-1 ring-lumina-primary shadow-sm bg-lumina-primary/5' : 'border-lumina-border hover:border-lumina-primary/30'
+                    }`}
                 >
                   {isDeleting && (
                     <div
@@ -689,19 +751,18 @@ export default function QuestionBankClient({ subject, initialMcqs, initialNextCu
                         {q.categoryName}
                       </span>
                     </div>
-                    
+
                     {isSelectionMode && (
-                      <div className={`w-5 h-5 rounded border flex items-center justify-center transition-colors ${
-                        isSelectedCard 
-                          ? 'bg-lumina-primary border-lumina-primary text-lumina-on-primary' 
+                      <div className={`w-5 h-5 rounded border flex items-center justify-center transition-colors ${isSelectedCard
+                          ? 'bg-lumina-primary border-lumina-primary text-lumina-on-primary'
                           : 'border-lumina-border bg-lumina-container-lowest text-transparent'
-                      }`}>
+                        }`}>
                         <Check size={12} />
                       </div>
                     )}
                   </div>
 
-                  <h4 
+                  <h4
                     className="font-sans text-sm md:text-base text-lumina-text leading-relaxed mb-5 font-medium line-clamp-3"
                     dangerouslySetInnerHTML={{ __html: formatLaTeX(q.questionStem) }}
                   />
@@ -710,23 +771,21 @@ export default function QuestionBankClient({ subject, initialMcqs, initialNextCu
                     {options.map((opt) => {
                       const isCorrect = q.answer.toUpperCase() === opt.id.toUpperCase();
                       return (
-                        <div 
+                        <div
                           key={opt.id}
-                          className={`p-3 rounded border text-xs flex items-center justify-between transition-colors ${
-                            isCorrect 
-                              ? 'bg-lumina-primary/5 border-lumina-primary text-lumina-primary font-medium' 
+                          className={`p-3 rounded border text-xs flex items-center justify-between transition-colors ${isCorrect
+                              ? 'bg-lumina-primary/5 border-lumina-primary text-lumina-primary font-medium'
                               : 'bg-lumina-container-lowest border-lumina-border text-lumina-secondary'
-                          }`}
+                            }`}
                         >
                           <div className="flex items-start gap-2.5">
-                            <span className={`w-5 h-5 rounded font-mono text-[10px] font-bold flex items-center justify-center shrink-0 border ${
-                              isCorrect
+                            <span className={`w-5 h-5 rounded font-mono text-[10px] font-bold flex items-center justify-center shrink-0 border ${isCorrect
                                 ? 'bg-lumina-primary text-lumina-on-primary border-lumina-primary'
                                 : 'bg-lumina-container-low border-lumina-border text-lumina-text-muted'
-                            }`}>
+                              }`}>
                               {opt.label}
                             </span>
-                            <span 
+                            <span
                               className="font-sans"
                               dangerouslySetInnerHTML={{ __html: formatLaTeX(opt.text) }}
                             />
