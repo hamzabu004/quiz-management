@@ -9,8 +9,9 @@ import { formatLaTeX } from '../../src/utils';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { deleteMcq } from '../actions/mcq';
-import { importCsvData } from '../actions/import';
+import { importCsvData, previewCsvData } from '../actions/import';
 import { loadMcqsPage } from '../actions/mcq-pagination';
+import type { CsvImportMcq } from '../lib/csv';
 import type { PaginatedMcq } from '../lib/mcq-pagination';
 
 interface Category {
@@ -46,7 +47,11 @@ export default function QuestionBankClient({ subject, initialMcqs, initialNextCu
   
   const [showImportDialog, setShowImportDialog] = useState(false);
   const [importFile, setImportFile] = useState<File | null>(null);
+  const [importPreview, setImportPreview] = useState<CsvImportMcq[] | null>(null);
+  const [csvImportCategories, setCsvImportCategories] = useState<string[]>([]);
+  const [bulkImportCategory, setBulkImportCategory] = useState('');
   const [importError, setImportError] = useState<string | null>(null);
+  const [isParsingImport, setIsParsingImport] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
 
   const [isSelectionMode, setIsSelectionMode] = useState(false);
@@ -56,7 +61,6 @@ export default function QuestionBankClient({ subject, initialMcqs, initialNextCu
   const [debouncedSearchQuery, setDebouncedSearchQuery] = useState('');
   const [deletingMcqId, setDeletingMcqId] = useState<string | null>(null);
   const [isNavigatingToNewMcq, setIsNavigatingToNewMcq] = useState(false);
-  const [isExportingDocx, setIsExportingDocx] = useState(false);
 
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [isRefreshingMcqs, setIsRefreshingMcqs] = useState(false);
@@ -78,30 +82,83 @@ export default function QuestionBankClient({ subject, initialMcqs, initialNextCu
     setTimeout(() => setImportError(null), 5000);
   };
 
+  const closeImportDialog = () => {
+    if (isParsingImport || isImporting) return;
+    setShowImportDialog(false);
+    setImportFile(null);
+    setImportPreview(null);
+    setCsvImportCategories([]);
+    setBulkImportCategory('');
+    setImportError(null);
+  };
+
+  const handleImportFileSelected = async (file: File | null) => {
+    setImportFile(file);
+    setImportPreview(null);
+    setCsvImportCategories([]);
+    setBulkImportCategory('');
+
+    if (!file) return;
+    if (!file.name.toLowerCase().endsWith('.csv') && file.type !== 'text/csv') {
+      showError("Invalid file format. Please upload a .csv file.");
+      setImportFile(null);
+      return;
+    }
+
+    try {
+      setIsParsingImport(true);
+      const text = await file.text();
+      const preview = await previewCsvData(text);
+      setImportPreview(preview);
+      setCsvImportCategories(Array.from(new Set(preview.map((mcq) => mcq.categoryName))));
+    } catch (error) {
+      showError(error instanceof Error ? error.message : "Failed to parse CSV.");
+    } finally {
+      setIsParsingImport(false);
+    }
+  };
+
   const handleImportSubmit = async () => {
     if (isImporting) return;
 
-    if (!importFile) {
-      showError("Please select a CSV file to import.");
-      return;
-    }
-    
-    if (!importFile.name.endsWith('.csv') && importFile.type !== 'text/csv') {
-      showError("Invalid file format. Please upload a .csv file.");
+    if (!importPreview || importPreview.length === 0) {
+      showError("There are no questions to import.");
       return;
     }
 
     try {
       setIsImporting(true);
-      const text = await importFile.text();
-      await importCsvData(subject.id, text);
+      await importCsvData(subject.id, importPreview);
       setShowImportDialog(false);
       setImportFile(null);
-    } catch (e) {
-      showError("Failed to parse or import CSV.");
+      setImportPreview(null);
+      setCsvImportCategories([]);
+      setBulkImportCategory('');
+      router.refresh();
+      await fetchFirstPage();
+    } catch (error) {
+      showError(error instanceof Error ? error.message : "Failed to import CSV.");
     } finally {
       setIsImporting(false);
     }
+  };
+
+  const importCategoryOptions = Array.from(new Set([
+    ...subject.categories.map((category) => category.categoryName),
+    ...csvImportCategories,
+  ])).sort((left, right) => left.localeCompare(right));
+
+  const applyCategoryToAllImports = (categoryName: string) => {
+    setBulkImportCategory(categoryName);
+    if (!categoryName) return;
+    setImportPreview((current) => current?.map((mcq) => ({ ...mcq, categoryName })) ?? null);
+  };
+
+  const updateImportCategory = (index: number, categoryName: string) => {
+    setBulkImportCategory('');
+    setImportPreview((current) => current?.map((mcq, mcqIndex) => (
+      mcqIndex === index ? { ...mcq, categoryName } : mcq
+    )) ?? null);
   };
 
   const toggleExplanation = (id: string) => {
@@ -164,129 +221,13 @@ export default function QuestionBankClient({ subject, initialMcqs, initialNextCu
     }
   };
 
-  const handleExport = async (type: 'csv' | 'pdf' | 'latex' | 'docx') => {
-    if (type === 'csv') {
-      window.location.href = `/api/export?ids=${selectedMCQIds.join(',')}`;
-    } else if (type === 'pdf') {
-      const selectedMcqs = mcqs.filter(q => selectedMCQIds.includes(q.id));
-      const iframe = document.createElement('iframe');
-      iframe.style.position = 'absolute';
-      iframe.style.width = '0px';
-      iframe.style.height = '0px';
-      iframe.style.border = 'none';
-      document.body.appendChild(iframe);
-      
-      const doc = iframe.contentWindow?.document;
-      if (doc) {
-        let html = `
-          <html>
-          <head>
-            <title>Exported MCQs</title>
-            <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
-            <style>
-              body { font-family: sans-serif; padding: 20px; line-height: 1.6; }
-              .question { margin-bottom: 30px; page-break-inside: avoid; }
-              .options { list-style-type: upper-alpha; margin-top: 10px; }
-              .option { margin-bottom: 8px; }
-            </style>
-          </head>
-          <body>
-            <ol>
-        `;
-        
-        selectedMcqs.forEach(q => {
-          html += `
-            <li class="question">
-              <div>${formatLaTeX(q.questionStem)}</div>
-              <ol class="options">
-                <li class="option">${formatLaTeX(q.optionA)}</li>
-                <li class="option">${formatLaTeX(q.optionB)}</li>
-                <li class="option">${formatLaTeX(q.optionC)}</li>
-                <li class="option">${formatLaTeX(q.optionD)}</li>
-              </ol>
-            </li>
-          `;
-        });
-        
-        html += `
-            </ol>
-          </body>
-          </html>
-        `;
-        
-        doc.open();
-        doc.write(html);
-        doc.close();
-        
-        setTimeout(() => {
-          iframe.contentWindow?.focus();
-          iframe.contentWindow?.print();
-          setTimeout(() => document.body.removeChild(iframe), 1000);
-        }, 500);
-      }
-    } else if (type === 'latex') {
-      const selectedMcqs = mcqs.filter(q => selectedMCQIds.includes(q.id));
-      const cleanForLaTeX = (text: string) => text.replace(/<[^>]+>/g, '').trim();
-      let tex = "\\documentclass{article}\n";
-      tex += "\\usepackage[utf8]{inputenc}\n";
-      tex += "\\usepackage{amsmath,amssymb}\n\n";
-      tex += "\\begin{document}\n\n";
-      tex += "\\begin{enumerate}\n";
-
-      selectedMcqs.forEach(q => {
-        tex += `  \\item ${cleanForLaTeX(q.questionStem)}\n`;
-        tex += "  \\begin{enumerate}\n";
-        tex += `    \\item ${cleanForLaTeX(q.optionA)}\n`;
-        tex += `    \\item ${cleanForLaTeX(q.optionB)}\n`;
-        tex += `    \\item ${cleanForLaTeX(q.optionC)}\n`;
-        tex += `    \\item ${cleanForLaTeX(q.optionD)}\n`;
-        tex += "  \\end{enumerate}\n\n";
-      });
-
-      tex += "\\end{enumerate}\n";
-      tex += "\\end{document}\n";
-      
-      const blob = new Blob([tex], { type: 'text/plain;charset=utf-8' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `mcqs_export_${new Date().toISOString().split('T')[0]}.tex`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-    } else if (type === 'docx') {
-      setIsExportingDocx(true);
-      setShowExportDropdown(false);
-      try {
-        const response = await fetch('/api/export/docx', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ ids: selectedMCQIds, subjectId: subject.id })
-        });
-        
-        if (!response.ok) {
-          const errorData = await response.json();
-          throw new Error(errorData.error || 'Failed to export DOCX');
-        }
-        
-        const blob = await response.blob();
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `mcqs_export_${new Date().toISOString().split('T')[0]}.docx`;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
-      } catch (err: any) {
-        showError(err.message || 'An error occurred while exporting DOCX');
-      } finally {
-        setIsExportingDocx(false);
-      }
-      return; // prevent setShowExportDropdown(false) again
-    }
+  const handleExport = (type: 'csv' | 'pdf' | 'latex' | 'docx') => {
     setShowExportDropdown(false);
+    const searchParams = new URLSearchParams({
+      ids: selectedMCQIds.join(','),
+      format: type,
+    });
+    router.push(`/subject/${subject.id}/export?${searchParams.toString()}`);
   };
 
   return (
@@ -302,78 +243,197 @@ export default function QuestionBankClient({ subject, initialMcqs, initialNextCu
 
       {showImportDialog && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
-          <div className="bg-lumina-surface rounded-lg shadow-2xl w-full max-w-xl overflow-hidden flex flex-col border border-lumina-border">
+          <div className={`bg-lumina-surface rounded-lg shadow-2xl w-full overflow-hidden flex max-h-[92vh] flex-col border border-lumina-border ${
+            importPreview ? 'max-w-6xl' : 'max-w-xl'
+          }`}>
             <div className="p-6 border-b border-lumina-border flex justify-between items-center bg-lumina-container-lowest">
-              <h3 className="font-sans font-semibold text-xl text-lumina-text flex items-center gap-2">
-                <Upload size={20} className="text-lumina-primary" />
-                Batch Import MCQs
-              </h3>
+              <div>
+                <h3 className="font-sans font-semibold text-xl text-lumina-text flex items-center gap-2">
+                  <Upload size={20} className="text-lumina-primary" />
+                  {importPreview ? 'Review Imported MCQs' : 'Batch Import MCQs'}
+                </h3>
+                {importPreview && (
+                  <p className="mt-1 text-xs text-lumina-text-muted">
+                    Nothing is saved until you confirm the import.
+                  </p>
+                )}
+              </div>
               <button 
-                onClick={() => {
-                  if (isImporting) return;
-                  setShowImportDialog(false);
-                  setImportFile(null);
-                  setImportError(null);
-                }}
-                disabled={isImporting}
+                onClick={closeImportDialog}
+                disabled={isParsingImport || isImporting}
                 className="text-lumina-text-muted hover:text-lumina-text transition-colors cursor-pointer disabled:cursor-not-allowed disabled:opacity-50"
               >
                 <X size={20} />
               </button>
             </div>
-            
-            <div className="p-6 overflow-y-auto max-h-[60vh]">
-              <div className="space-y-4">
-                <div className="bg-lumina-container-low p-4 rounded-lg border border-lumina-border flex gap-4 text-sm">
-                  <div className="flex-1">
-                    <span className="text-lumina-text-muted block text-xs uppercase tracking-wider font-mono mb-1">Subject</span>
-                    <span className="font-semibold text-lumina-text">{subject.subjectName}</span>
+
+            <div className="p-6 overflow-y-auto">
+              {!importPreview ? (
+                <div className="space-y-4">
+                  <div className="bg-lumina-container-low p-4 rounded-lg border border-lumina-border flex gap-4 text-sm">
+                    <div className="flex-1">
+                      <span className="text-lumina-text-muted block text-xs uppercase tracking-wider font-mono mb-1">Subject</span>
+                      <span className="font-semibold text-lumina-text">{subject.subjectName}</span>
+                    </div>
+                  </div>
+
+                  <div className="bg-blue-500/10 border border-blue-500/20 p-4 rounded-lg">
+                    <h4 className="text-sm font-semibold text-blue-700 mb-2 flex items-center gap-2">
+                      <HelpCircle size={16} />
+                      CSV Structure Requirements
+                    </h4>
+                    <div className="bg-lumina-container-lowest border border-lumina-border rounded p-3 font-mono text-xs overflow-x-auto whitespace-nowrap text-lumina-secondary selection:bg-lumina-primary/20">
+                      Stem,Category,Option_A,Option_B,Option_C,Option_D,Correct_Answer,Explanation
+                    </div>
+                  </div>
+
+                  <div className="mt-6 border-t border-lumina-border pt-4">
+                    <h4 className="text-sm font-semibold text-lumina-text mb-2">Select CSV File</h4>
+                    <input
+                      type="file"
+                      accept=".csv"
+                      onChange={(event) => void handleImportFileSelected(event.target.files?.[0] ?? null)}
+                      disabled={isParsingImport}
+                      className="block w-full text-sm text-lumina-secondary file:mr-4 file:py-2 file:px-4 file:rounded file:border-0 file:text-sm file:font-semibold file:bg-lumina-primary/10 file:text-lumina-primary hover:file:bg-lumina-primary/20 cursor-pointer border border-lumina-border p-2 rounded disabled:cursor-wait disabled:opacity-50"
+                    />
+                    {isParsingImport && (
+                      <div className="mt-4 flex items-center gap-2 text-sm text-lumina-secondary" role="status">
+                        <LoaderCircle size={16} className="animate-spin text-lumina-primary" />
+                        Reading and validating {importFile?.name ?? 'CSV'}…
+                      </div>
+                    )}
                   </div>
                 </div>
+              ) : (
+                <div className="space-y-5">
+                  <div className="flex flex-col gap-4 rounded-lg border border-lumina-border bg-lumina-container-low p-4 md:flex-row md:items-end md:justify-between">
+                    <div>
+                      <span className="block text-[10px] font-mono uppercase tracking-wider text-lumina-text-muted">Ready to review</span>
+                      <p className="mt-1 text-sm font-semibold text-lumina-text">
+                        {importPreview.length} question{importPreview.length === 1 ? '' : 's'} from {importFile?.name}
+                      </p>
+                    </div>
+                    <label className="w-full md:max-w-xs">
+                      <span className="mb-1.5 block text-xs font-semibold text-lumina-text">Apply category to all</span>
+                      <select
+                        value={bulkImportCategory}
+                        onChange={(event) => applyCategoryToAllImports(event.target.value)}
+                        disabled={isImporting}
+                        className="w-full rounded border border-lumina-border bg-lumina-container-lowest px-3 py-2 text-sm text-lumina-text outline-none focus:border-lumina-primary focus:ring-1 focus:ring-lumina-primary disabled:opacity-60"
+                      >
+                        <option value="">Keep individual categories</option>
+                        {importCategoryOptions.map((categoryName) => (
+                          <option key={categoryName} value={categoryName}>{categoryName}</option>
+                        ))}
+                      </select>
+                    </label>
+                  </div>
 
-                <div className="bg-blue-500/10 border border-blue-500/20 p-4 rounded-lg">
-                  <h4 className="text-sm font-semibold text-blue-700 mb-2 flex items-center gap-2">
-                    <HelpCircle size={16} />
-                    CSV Structure Requirements
-                  </h4>
-                  <div className="bg-lumina-container-lowest border border-lumina-border rounded p-3 font-mono text-xs overflow-x-auto whitespace-nowrap text-lumina-secondary selection:bg-lumina-primary/20">
-                    Stem,Category,Option_A,Option_B,Option_C,Option_D,Correct_Answer,Explanation
+                  <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
+                    {importPreview.map((mcq, index) => {
+                      const options = [
+                        { label: 'A', text: mcq.optionA },
+                        { label: 'B', text: mcq.optionB },
+                        { label: 'C', text: mcq.optionC },
+                        { label: 'D', text: mcq.optionD },
+                      ];
+
+                      return (
+                        <article key={index} className="rounded-lg border border-lumina-border bg-lumina-container-low p-5">
+                          <div className="mb-4 flex items-center justify-between gap-3">
+                            <span className="font-mono text-[10px] font-bold uppercase tracking-widest text-lumina-primary">
+                              Question {index + 1}
+                            </span>
+                            <span className="text-[10px] font-mono uppercase tracking-wider text-lumina-text-muted">
+                              Answer {mcq.answer.toUpperCase()}
+                            </span>
+                          </div>
+
+                          <div
+                            className="mb-5 text-sm font-medium leading-relaxed text-lumina-text"
+                            dangerouslySetInnerHTML={{ __html: formatLaTeX(mcq.questionStem) }}
+                          />
+
+                          <div className="space-y-2.5">
+                            {options.map((option) => {
+                              const isCorrect = mcq.answer.toUpperCase() === option.label;
+                              return (
+                                <div
+                                  key={option.label}
+                                  className={`flex items-start gap-2.5 rounded border p-3 text-xs ${
+                                    isCorrect
+                                      ? 'border-lumina-primary bg-lumina-primary/5 text-lumina-primary'
+                                      : 'border-lumina-border bg-lumina-container-lowest text-lumina-secondary'
+                                  }`}
+                                >
+                                  <span className={`flex h-5 w-5 shrink-0 items-center justify-center rounded border font-mono text-[10px] font-bold ${
+                                    isCorrect
+                                      ? 'border-lumina-primary bg-lumina-primary text-lumina-on-primary'
+                                      : 'border-lumina-border bg-lumina-container-low text-lumina-text-muted'
+                                  }`}>
+                                    {option.label}
+                                  </span>
+                                  <span dangerouslySetInnerHTML={{ __html: formatLaTeX(option.text) }} />
+                                </div>
+                              );
+                            })}
+                          </div>
+
+                          <label className="mt-5 block border-t border-lumina-border pt-4">
+                            <span className="mb-1.5 block text-xs font-semibold text-lumina-text">Category</span>
+                            <select
+                              value={mcq.categoryName}
+                              onChange={(event) => updateImportCategory(index, event.target.value)}
+                              disabled={isImporting}
+                              className="w-full rounded border border-lumina-border bg-lumina-container-lowest px-3 py-2 text-sm text-lumina-text outline-none focus:border-lumina-primary focus:ring-1 focus:ring-lumina-primary disabled:opacity-60"
+                            >
+                              {importCategoryOptions.map((categoryName) => (
+                                <option key={categoryName} value={categoryName}>{categoryName}</option>
+                              ))}
+                            </select>
+                          </label>
+                        </article>
+                      );
+                    })}
                   </div>
                 </div>
-
-                <div className="mt-6 border-t border-lumina-border pt-4">
-                  <h4 className="text-sm font-semibold text-lumina-text mb-2">Select CSV File</h4>
-                  <input
-                    type="file"
-                    accept=".csv"
-                    onChange={(e) => setImportFile(e.target.files ? e.target.files[0] : null)}
-                    disabled={isImporting}
-                    className="block w-full text-sm text-lumina-secondary file:mr-4 file:py-2 file:px-4 file:rounded file:border-0 file:text-sm file:font-semibold file:bg-lumina-primary/10 file:text-lumina-primary hover:file:bg-lumina-primary/20 cursor-pointer border border-lumina-border p-2 rounded disabled:cursor-not-allowed disabled:opacity-50"
-                  />
-                </div>
-              </div>
+              )}
             </div>
 
-            <div className="p-6 border-t border-lumina-border bg-lumina-container-lowest flex justify-end gap-3">
+            <div className="p-6 border-t border-lumina-border bg-lumina-container-lowest flex flex-wrap justify-end gap-3">
+              {importPreview && (
+                <button
+                  onClick={() => {
+                    setImportPreview(null);
+                    setImportFile(null);
+                    setCsvImportCategories([]);
+                    setBulkImportCategory('');
+                  }}
+                  disabled={isImporting}
+                  className="mr-auto px-4 py-2 text-sm font-medium text-lumina-secondary hover:text-lumina-text transition-colors cursor-pointer disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  Choose another file
+                </button>
+              )}
               <button
-                onClick={() => {
-                  if (!isImporting) setShowImportDialog(false);
-                }}
-                disabled={isImporting}
+                onClick={closeImportDialog}
+                disabled={isParsingImport || isImporting}
                 className="px-4 py-2 text-sm font-medium text-lumina-secondary hover:text-lumina-text transition-colors cursor-pointer disabled:cursor-not-allowed disabled:opacity-50"
               >
                 Cancel
               </button>
-              <button
-                onClick={handleImportSubmit}
-                disabled={isImporting}
-                className="px-4 py-2 bg-lumina-primary hover:bg-lumina-primary-hover text-lumina-on-primary rounded text-sm font-semibold transition-all cursor-pointer disabled:cursor-wait disabled:opacity-80"
-              >
-                <span className="flex items-center gap-2">
-                  {isImporting && <LoaderCircle size={16} className="animate-spin" />}
-                  {isImporting ? 'Importing…' : 'Import Questions'}
-                </span>
-              </button>
+              {importPreview && (
+                <button
+                  onClick={handleImportSubmit}
+                  disabled={isImporting}
+                  className="px-4 py-2 bg-lumina-primary hover:bg-lumina-primary-hover text-lumina-on-primary rounded text-sm font-semibold transition-all cursor-pointer disabled:cursor-wait disabled:opacity-80"
+                >
+                  <span className="flex items-center gap-2">
+                    {isImporting ? <LoaderCircle size={16} className="animate-spin" /> : <Check size={16} />}
+                    {isImporting ? 'Importing…' : `Confirm Import (${importPreview.length})`}
+                  </span>
+                </button>
+              )}
             </div>
           </div>
         </div>
@@ -406,8 +466,8 @@ export default function QuestionBankClient({ subject, initialMcqs, initialNextCu
               }`}
             >
               <Download size={14} />
-              <span>{isExportingDocx ? 'Exporting...' : 'Export'}</span>
-              {isExportingDocx ? <LoaderCircle size={14} className="animate-spin" /> : <ChevronDown size={14} />}
+              <span>Export</span>
+              <ChevronDown size={14} />
             </button>
 
             {showExportDropdown && (
@@ -432,8 +492,7 @@ export default function QuestionBankClient({ subject, initialMcqs, initialNextCu
                 </button>
                 <button
                   onClick={() => handleExport('docx')}
-                  disabled={isExportingDocx}
-                  className="w-full text-left px-4 py-2 text-xs text-lumina-secondary hover:bg-lumina-container-lowest hover:text-lumina-primary transition-colors cursor-pointer disabled:opacity-50"
+                  className="w-full text-left px-4 py-2 text-xs text-lumina-secondary hover:bg-lumina-container-lowest hover:text-lumina-primary transition-colors cursor-pointer"
                 >
                   Export DOCX
                 </button>

@@ -3,9 +3,34 @@ import { NextRequest, NextResponse } from 'next/server';
 
 export async function POST(request: NextRequest) {
   try {
-    const { ids, subjectId } = await request.json();
+    type RequestedQuestion = {
+      id: string;
+      optionA: string;
+      optionB: string;
+      optionC: string;
+      optionD: string;
+    };
+    const body = await request.json() as { ids?: unknown; questions?: unknown; subjectId?: unknown };
+    const requestedQuestions = Array.isArray(body.questions)
+      ? body.questions.filter((question): question is RequestedQuestion => (
+          typeof question === 'object'
+          && question !== null
+          && typeof question.id === 'string'
+          && typeof question.optionA === 'string'
+          && typeof question.optionB === 'string'
+          && typeof question.optionC === 'string'
+          && typeof question.optionD === 'string'
+        ))
+      : [];
+    const legacyIds = Array.isArray(body.ids)
+      ? body.ids.filter((id): id is string => typeof id === 'string' && id.length > 0)
+      : [];
+    const ids = requestedQuestions.length > 0
+      ? requestedQuestions.map((question) => question.id)
+      : legacyIds;
+    const subjectId = typeof body.subjectId === 'string' ? body.subjectId : '';
 
-    if (!ids || !ids.length || !subjectId) {
+    if (ids.length === 0 || !subjectId) {
       return NextResponse.json({ error: 'Missing required parameters' }, { status: 400 });
     }
 
@@ -18,8 +43,14 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Subject not found' }, { status: 404 });
     }
 
-    const mcqs = await prisma.mcq.findMany({
+    const unorderedMcqs = await prisma.mcq.findMany({
       where: { id: { in: ids } }
+    });
+    const mcqById = new Map(unorderedMcqs.map((mcq) => [mcq.id, mcq]));
+    const requestedQuestionById = new Map(requestedQuestions.map((question) => [question.id, question]));
+    const mcqs = ids.flatMap((id: string) => {
+      const mcq = mcqById.get(id);
+      return mcq ? [mcq] : [];
     });
 
     // Health check
@@ -36,13 +67,16 @@ export async function POST(request: NextRequest) {
     const payload = {
       subject: subject.subjectName,
       course: subject.classroom.classroomName,
-      questions: mcqs.map(q => ({
-        question: q.questionStem,
-        option_a: q.optionA,
-        option_b: q.optionB,
-        option_c: q.optionC,
-        option_d: q.optionD
-      }))
+      questions: mcqs.map(q => {
+        const requestedQuestion = requestedQuestionById.get(q.id);
+        return {
+          question: q.questionStem,
+          option_a: requestedQuestion?.optionA ?? q.optionA,
+          option_b: requestedQuestion?.optionB ?? q.optionB,
+          option_c: requestedQuestion?.optionC ?? q.optionC,
+          option_d: requestedQuestion?.optionD ?? q.optionD,
+        };
+      })
     };
 
     const generateResponse = await fetch(`${process.env.DOCX_SERVICE_URL}/generate`, {

@@ -11,7 +11,7 @@ export async function GET(request: NextRequest) {
 
   const idArray = ids.split(',');
 
-  const mcqs = await prisma.mcq.findMany({
+  const unorderedMcqs = await prisma.mcq.findMany({
     where: {
       id: { in: idArray }
     },
@@ -21,9 +21,14 @@ export async function GET(request: NextRequest) {
       }
     }
   });
+  const mcqById = new Map(unorderedMcqs.map((mcq) => [mcq.id, mcq]));
+  const mcqs = idArray.flatMap((id) => {
+    const mcq = mcqById.get(id);
+    return mcq ? [mcq] : [];
+  });
 
   const csvContent = 'ID,Category,Stem,Option_A,Option_B,Option_C,Option_D,Correct_Answer,Explanation\n' + 
-    mcqs.map((q: any) => {
+    mcqs.map((q) => {
       const categoryName = q.categories[0]?.category.categoryName || 'Uncategorized';
       return `"${q.id}","${categoryName}","${q.questionStem.replace(/"/g, '""')}","${q.optionA.replace(/"/g, '""')}","${q.optionB.replace(/"/g, '""')}","${q.optionC.replace(/"/g, '""')}","${q.optionD.replace(/"/g, '""')}","${q.answer}","${(q.explanation || '').replace(/"/g, '""')}"`;
     }).join('\n');

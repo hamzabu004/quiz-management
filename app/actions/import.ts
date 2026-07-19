@@ -2,63 +2,106 @@
 
 import prisma from '../../src/lib/prisma';
 import { revalidatePath } from 'next/cache';
+import { parseCsv } from '../lib/csv';
+import type { CsvImportMcq, CsvRow } from '../lib/csv';
 
-function normalizeAnswer(answer: string) {
+const REQUIRED_HEADERS = [
+  'Stem',
+  'Category',
+  'Option_A',
+  'Option_B',
+  'Option_C',
+  'Option_D',
+  'Correct_Answer',
+  'Explanation',
+] as const;
+
+function normalizeAnswer(answer: unknown, location: string) {
+  if (typeof answer !== 'string') {
+    throw new Error(`${location}: Correct_Answer must be A, B, C, or D.`);
+  }
+
   const normalized = answer.trim().toLowerCase();
   if (!['a', 'b', 'c', 'd'].includes(normalized)) {
-    throw new Error('Correct answer must be A, B, C, or D.');
+    throw new Error(`${location}: Correct_Answer must be A, B, C, or D.`);
   }
   return normalized;
 }
 
-export async function importCsvData(subjectId: string, csvContent: string) {
-  // Very basic CSV parsing for demonstration purposes
-  const lines = csvContent.split('\n');
-  const importedMcqs: Array<{
-    categoryName: string;
-    data: {
-      subjectId: string;
-      questionStem: string;
-      optionA: string;
-      optionB: string;
-      optionC: string;
-      optionD: string;
-      answer: string;
-      explanation: string;
-    };
-  }> = [];
-
-  for (let i = 1; i < lines.length; i++) {
-    const line = lines[i].trim();
-    if (!line) continue;
-    
-    // Simplistic split (doesn't handle commas inside quotes)
-    const values = line.split(',');
-    if (values.length >= 7) {
-      const stem = values[0];
-      const categoryName = values[1];
-      const optionA = values[2];
-      const optionB = values[3];
-      const optionC = values[4];
-      const optionD = values[5];
-      const answer = normalizeAnswer(values[6]);
-      const explanation = values[7] || '';
-
-      importedMcqs.push({
-        categoryName,
-        data: {
-          subjectId,
-          questionStem: stem,
-          optionA,
-          optionB,
-          optionC,
-          optionD,
-          answer,
-          explanation,
-        },
-      });
-    }
+function requireText(value: unknown, field: string, location: string) {
+  if (typeof value !== 'string' || value.trim() === '') {
+    throw new Error(`${location}: ${field} cannot be empty.`);
   }
+  return value.trim();
+}
+
+function parseCsvImport(csvContent: string): CsvImportMcq[] {
+  const rows = parseCsv(csvContent);
+  if (rows.length === 0) throw new Error('The CSV file is empty.');
+
+  const headerIndexes = new Map(
+    rows[0].values.map((header, index) => [header.trim().toLowerCase(), index]),
+  );
+  const missingHeaders = REQUIRED_HEADERS.filter(
+    (header) => !headerIndexes.has(header.toLowerCase()),
+  );
+
+  if (missingHeaders.length > 0) {
+    throw new Error(`CSV is missing required column(s): ${missingHeaders.join(', ')}.`);
+  }
+
+  const valueAt = (row: CsvRow, header: (typeof REQUIRED_HEADERS)[number]) => {
+    const index = headerIndexes.get(header.toLowerCase());
+    return index === undefined ? '' : (row.values[index] ?? '').trim();
+  };
+
+  const importedMcqs = rows.slice(1).map((row) => {
+    const location = `CSV line ${row.lineNumber}`;
+    return {
+      questionStem: requireText(valueAt(row, 'Stem'), 'Stem', location),
+      categoryName: requireText(valueAt(row, 'Category'), 'Category', location),
+      optionA: requireText(valueAt(row, 'Option_A'), 'Option_A', location),
+      optionB: requireText(valueAt(row, 'Option_B'), 'Option_B', location),
+      optionC: requireText(valueAt(row, 'Option_C'), 'Option_C', location),
+      optionD: requireText(valueAt(row, 'Option_D'), 'Option_D', location),
+      answer: normalizeAnswer(valueAt(row, 'Correct_Answer'), location),
+      explanation: valueAt(row, 'Explanation'),
+    };
+  });
+
+  if (importedMcqs.length === 0) {
+    throw new Error('The CSV file does not contain any questions.');
+  }
+
+  return importedMcqs;
+}
+
+function validateImportItems(items: CsvImportMcq[]): CsvImportMcq[] {
+  if (!Array.isArray(items) || items.length === 0) {
+    throw new Error('There are no questions to import.');
+  }
+
+  return items.map((item, index) => {
+    const location = `Question ${index + 1}`;
+    return {
+      questionStem: requireText(item?.questionStem, 'Stem', location),
+      categoryName: requireText(item?.categoryName, 'Category', location),
+      optionA: requireText(item?.optionA, 'Option_A', location),
+      optionB: requireText(item?.optionB, 'Option_B', location),
+      optionC: requireText(item?.optionC, 'Option_C', location),
+      optionD: requireText(item?.optionD, 'Option_D', location),
+      answer: normalizeAnswer(item?.answer, location),
+      explanation: typeof item?.explanation === 'string' ? item.explanation.trim() : '',
+    };
+  });
+}
+
+export async function previewCsvData(csvContent: string) {
+  return parseCsvImport(csvContent);
+}
+
+export async function importCsvData(subjectId: string, items: CsvImportMcq[]) {
+  const importedMcqs = validateImportItems(items);
 
   const categoryNames = Array.from(new Set(importedMcqs.map((mcq) => mcq.categoryName)));
   const BULK_BATCH_SIZE = 500;
@@ -83,7 +126,7 @@ export async function importCsvData(subjectId: string, csvContent: string) {
       createdCategories.forEach((category) => categoryByName.set(category.categoryName, category.id));
     }
 
-    const mcqsByCategory = new Map<string, typeof importedMcqs>();
+    const mcqsByCategory = new Map<string, CsvImportMcq[]>();
     importedMcqs.forEach((mcq) => {
       const entries = mcqsByCategory.get(mcq.categoryName) ?? [];
       entries.push(mcq);
@@ -98,7 +141,16 @@ export async function importCsvData(subjectId: string, csvContent: string) {
       for (let start = 0; start < mcqs.length; start += BULK_BATCH_SIZE) {
         const batch = mcqs.slice(start, start + BULK_BATCH_SIZE);
         const createdMcqs = await tx.mcq.createManyAndReturn({
-          data: batch.map((mcq) => mcq.data),
+          data: batch.map((mcq) => ({
+            subjectId,
+            questionStem: mcq.questionStem,
+            optionA: mcq.optionA,
+            optionB: mcq.optionB,
+            optionC: mcq.optionC,
+            optionD: mcq.optionD,
+            answer: mcq.answer,
+            explanation: mcq.explanation,
+          })),
           select: { id: true },
         });
 
