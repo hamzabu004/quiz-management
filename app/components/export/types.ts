@@ -1,5 +1,9 @@
 export type ExportFormat = 'csv' | 'pdf' | 'latex' | 'docx';
 
+export const EXPORT_TEMPLATE_IDS = ['standard', 'answer-grid'] as const;
+
+export type ExportTemplateId = (typeof EXPORT_TEMPLATE_IDS)[number];
+
 export type ExportMcq = {
   id: string;
   questionStem: string;

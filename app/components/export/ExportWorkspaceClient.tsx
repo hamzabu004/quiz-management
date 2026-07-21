@@ -3,12 +3,13 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { ArrowLeft, CheckCircle2, X } from 'lucide-react';
-import { formatLaTeX } from '../../../src/utils';
 import ExportControls from './ExportControls';
 import ExportMcqCard from './ExportMcqCard';
 import ExportPrompt from './ExportPrompt';
+import ExportTemplateSelector from './ExportTemplateSelector';
 import { applyAnswerPattern, moveMcq, parseAnswerPattern, shuffleMcqs } from './export-utils';
-import type { ExportFormat, ExportMcq, ExportSubject } from './types';
+import { EXPORT_TEMPLATES } from './export-templates';
+import type { ExportFormat, ExportMcq, ExportSubject, ExportTemplateId } from './types';
 
 type Props = {
   subject: ExportSubject;
@@ -34,6 +35,7 @@ function escapeCsv(value: string | null) {
 export default function ExportWorkspaceClient({ subject, initialMcqs, initialFormat }: Props) {
   const [orderedMcqs, setOrderedMcqs] = useState(initialMcqs);
   const [format, setFormat] = useState<ExportFormat>(initialFormat);
+  const [templateId, setTemplateId] = useState<ExportTemplateId>('standard');
   const [answerPattern, setAnswerPattern] = useState('');
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [message, setMessage] = useState<{ type: 'error' | 'success'; text: string } | null>(null);
@@ -86,21 +88,7 @@ export default function ExportWorkspaceClient({ subject, initialMcqs, initialFor
   };
 
   const exportLatex = () => {
-    const clean = (text: string) => text.replace(/<[^>]+>/g, '').trim();
-    let latex = '\\documentclass{article}\n';
-    latex += '\\usepackage[utf8]{inputenc}\n';
-    latex += '\\usepackage{amsmath,amssymb}\n\n';
-    latex += '\\begin{document}\n\n\\begin{enumerate}\n';
-    orderedMcqs.forEach((mcq) => {
-      latex += `  \\item ${clean(mcq.questionStem)}\n`;
-      latex += '  \\begin{enumerate}\n';
-      latex += `    \\item ${clean(mcq.optionA)}\n`;
-      latex += `    \\item ${clean(mcq.optionB)}\n`;
-      latex += `    \\item ${clean(mcq.optionC)}\n`;
-      latex += `    \\item ${clean(mcq.optionD)}\n`;
-      latex += '  \\end{enumerate}\n\n';
-    });
-    latex += '\\end{enumerate}\n\\end{document}\n';
+    const latex = EXPORT_TEMPLATES[templateId].renderLatexDocument(subject.subjectName, orderedMcqs);
     downloadBlob(new Blob([latex], { type: 'text/plain;charset=utf-8' }), 'mcqs_export.tex');
   };
 
@@ -118,17 +106,7 @@ export default function ExportWorkspaceClient({ subject, initialMcqs, initialFor
       throw new Error('Unable to open the print document.');
     }
 
-    const questions = orderedMcqs.map((mcq) => `
-      <li class="question">
-        <div>${formatLaTeX(mcq.questionStem)}</div>
-        <ol class="options">
-          <li>${formatLaTeX(mcq.optionA)}</li>
-          <li>${formatLaTeX(mcq.optionB)}</li>
-          <li>${formatLaTeX(mcq.optionC)}</li>
-          <li>${formatLaTeX(mcq.optionD)}</li>
-        </ol>
-      </li>
-    `).join('');
+    const questions = EXPORT_TEMPLATES[templateId].renderPrintQuestions(orderedMcqs);
 
     documentToPrint.open();
     documentToPrint.write(`
@@ -143,9 +121,17 @@ export default function ExportWorkspaceClient({ subject, initialMcqs, initialFor
             .question { margin-bottom: 26px; padding-left: 6px; page-break-inside: avoid; }
             .options { list-style-type: upper-alpha; margin-top: 10px; }
             .options li { margin-bottom: 7px; padding-left: 4px; }
+            .answer-grid { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 9px; }
+            .answer-grid th, .answer-grid td { border: 1px solid #555; padding: 7px; text-align: left; vertical-align: top; overflow-wrap: anywhere; }
+            .answer-grid th { background: #eee; font-size: 9px; }
+            .answer-grid th:first-child, .answer-grid td:first-child { width: 25%; }
+            .answer-grid th:last-child, .answer-grid td:last-child { width: 13%; }
+            .answer-grid tr { page-break-inside: avoid; }
+            .answer-circles { white-space: nowrap; text-align: center !important; font-size: 13px; letter-spacing: 1px; }
+            @page { size: ${templateId === 'answer-grid' ? 'A4 landscape' : 'A4 portrait'}; margin: 12mm; }
           </style>
         </head>
-        <body><h1>${subject.subjectName}</h1><ol>${questions}</ol></body>
+        <body><h1>${subject.subjectName}</h1>${questions}</body>
       </html>
     `);
     documentToPrint.close();
@@ -163,6 +149,7 @@ export default function ExportWorkspaceClient({ subject, initialMcqs, initialFor
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         subjectId: subject.id,
+        templateId,
         questions: orderedMcqs.map((mcq) => ({
           id: mcq.id,
           optionA: mcq.optionA,
@@ -214,6 +201,13 @@ export default function ExportWorkspaceClient({ subject, initialMcqs, initialFor
           Set the final question order once, then export the same arrangement in any available format.
         </p>
       </div>
+
+      <ExportTemplateSelector
+        format={format}
+        selectedTemplateId={templateId}
+        disabled={isExporting}
+        onChange={setTemplateId}
+      />
 
       {message && (
         <div className={`mb-5 flex items-start justify-between gap-3 rounded border px-4 py-3 text-sm ${
